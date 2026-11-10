@@ -39,20 +39,20 @@ namespace simple_sim
     }
   }  // namespace
 
-  Plant::Plant(PlantConfig config, ForceModel aerodynamic,
-               MotorDerivative motors, ThrustDerivative thrust)
+  Plant::Plant(PlantConfig config, ForceModel external, MotorDerivative motors,
+               ThrustDerivative thrust)
       : config_(std::move(config)),
-        aerodynamic_(std::move(aerodynamic)),
+        external_(std::move(external)),
         motors_(std::move(motors)),
         thrust_(std::move(thrust))
   {
     config_.validate();
   }
-  Wrench Plant::aero(const State &state) const
+  Wrench Plant::external_wrench(const State &state) const
   {
-    Wrench aerodynamic = aerodynamic_ ? aerodynamic_(state) : Wrench{};
-    validate_wrench(aerodynamic);
-    return aerodynamic;
+    Wrench external = external_ ? external_(state) : Wrench{};
+    validate_wrench(external);
+    return external;
   }
   Feedback Plant::feedback(const State &state, const Command &command,
                            const Actuation &actuation) const
@@ -60,14 +60,13 @@ namespace simple_sim
     validate_state(state);
     validate_command(command);
     Feedback feedback;
-    feedback.aerodynamic  = aero(state);
+    feedback.external     = external_wrench(state);
     const Wrench actuated = actuation(state, command);
     validate_wrench(actuated);
     feedback.applied = actuated;
     feedback.specific_force =
-        (actuated.force + feedback.aerodynamic.force) / config_.mass;
-    feedback.aerodynamic_specific_force =
-        feedback.aerodynamic.force / config_.mass;
+        (actuated.force + feedback.external.force) / config_.mass;
+    feedback.external_specific_force = feedback.external.force / config_.mass;
     return feedback;
   }
   State Plant::advance(const State &state, const Command &command, double dt,
@@ -79,16 +78,15 @@ namespace simple_sim
       throw std::invalid_argument("invalid integration step or actuation");
     const auto derivative = [&](const Vector &x) -> Vector
     {
-      const State  stage       = unpack(x, state);
-      const Wrench actuated    = actuation(stage, command);
-      const Wrench aerodynamic = aero(stage);
+      const State  stage    = unpack(x, state);
+      const Wrench actuated = actuation(stage, command);
+      const Wrench external = external_wrench(stage);
       validate_wrench(actuated);
       Vector state_rate        = Vector::Zero();
       state_rate.segment<3>(0) = stage.velocity;
       state_rate.segment<3>(3) =
           Eigen::Vector3d(0.0, 0.0, -config_.gravity) +
-          stage.attitude *
-              ((actuated.force + aerodynamic.force) / config_.mass);
+          stage.attitude * ((actuated.force + external.force) / config_.mass);
       const Eigen::Vector3d omega_body = stage.angular_velocity;
       // q_dot = 0.5 * q * [0, omega_body], Hamilton quaternion.
       const Eigen::Quaterniond quaternion_rate =
@@ -98,7 +96,7 @@ namespace simple_sim
           quaternion_rate.x() * 0.5, quaternion_rate.y() * 0.5,
           quaternion_rate.z() * 0.5;
       state_rate.segment<3>(10) =
-          (actuated.moment + aerodynamic.moment -
+          (actuated.moment + external.moment -
            omega_body.cross(config_.inertia.cwiseProduct(omega_body)))
               .cwiseQuotient(config_.inertia);
       if (motors_)

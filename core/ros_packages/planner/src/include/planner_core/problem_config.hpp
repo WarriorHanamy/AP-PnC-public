@@ -18,7 +18,6 @@
 
 #include <gcopter/gcopter.hpp>
 #include <string>
-#include <vector>
 
 namespace planner::core
 {
@@ -90,12 +89,11 @@ namespace planner::core
   };
 
   /**
-   * @brief Prior-free flatness model parameters (phi-theory linear aero map)
+   * @brief Quadrotor flatness parameters. Thrust aligns with specific force.
    */
   struct FlatnessCfg
   {
-    std::vector<double> phi  = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.09408};
-    double              mass = 2.0;
+    double mass = 2.0;
     // ENU gravity used by the FLU flatness map, m/s^2.
     double gravity = 9.81;
   };

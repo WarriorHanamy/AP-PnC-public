@@ -17,7 +17,7 @@ is statically linked, so regenerate **and rebuild** after model/ABI changes.
 ```bash
 uv run --project "$AP_PNC_DIR" ap-pnc gen-nmpc-lib
 uv run --project "$AP_PNC_DIR" ap-pnc build simple-sim
-uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --aero lyu --vmax 8
+uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --vmax 8
 ```
 
 Rust 1.96.0 and Rerun 0.38.1 are pinned. CLI downloads are SHA256 checked and
@@ -35,7 +35,7 @@ The optional `practical` profile requires local authorized numeric extraction:
 
 ```bash
 bash "$AP_PNC_DIR/infra/sim_infra/simple_sim/stack/stack.sh" import-matlab
-uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile practical --aero lyu --vmax 8
+uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile practical --vmax 8
 ```
 
 Profiles/provenance stay under `.artifacts/vtol-matlab/`. Missing practical data
@@ -84,7 +84,7 @@ saved artifact directories; this lifecycle change does not retest them.
 Build-time flatness kernels remain separate:
 
 ```bash
-bash "$AP_PNC_DIR/core/ros_packages/planner/src/tailsitter_df/codegen/build.sh"
+bash "$AP_PNC_DIR/core/ros_packages/planner/src/quadrotor_df/codegen/build.sh"
 bash "$AP_PNC_DIR/infra/sim_infra/simple_sim/stack/stack.sh" test-ffi
 ```
 

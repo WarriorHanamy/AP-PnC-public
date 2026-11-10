@@ -4,17 +4,15 @@
 # Authors: Zihao Liu
 # Authors: Junning Liang
 
-"""ENU/FLU NMPC with ideal inner-loop tracking and command integrators.
+"""ENU/FLU quadrotor NMPC with ideal inner-loop tracking and command integrators.
 
 x = [position_W, velocity_W, body_rate_command, quaternion_WB_wxyz,
-     specific_thrust_command, cx] (15).
+     specific_thrust_command] (14).
 
-cx is the LUMPED body-X specific-force coefficient [1/m]: it is scaled by |v|^2
-to give body-X specific force. It intentionally also absorbs any actuator
-body-X component measured on the IMU.
 u = d[specific_thrust_command, body_rate_command]/dt (4).
-Motor dynamics, torque, the remaining body axes and rate-loop lag belong to the
-plant, not this model. Ground speed only: zero wind is required.
+Collective thrust is along body +Z. There is no wing force, angle-of-attack
+state, or aerodynamic parameter. Motor dynamics, torque and rate-loop lag
+belong to the plant, not this model. Ground speed only: zero wind is required.
 """
 
 from __future__ import annotations
@@ -48,8 +46,8 @@ def rotation_matrix_from_quaternion(quaternion_wxyz: cs.SX) -> cs.SX:
     )
 
 
-def create_tailsitter_model() -> AcadosModel:
-    """Construct the augmented command-rate control model (no actuator lag)."""
+def create_quadrotor_model() -> AcadosModel:
+    """Construct the quadrotor command-rate model (no actuator lag, no wing force)."""
     from acados_template import AcadosModel
 
     position_world = cs.SX.sym("position_world", 3)
@@ -57,56 +55,30 @@ def create_tailsitter_model() -> AcadosModel:
     body_rate_command = cs.SX.sym("body_rate_command", 3)
     attitude_wxyz = cs.SX.sym("attitude_wxyz", 4)
     specific_thrust_command = cs.SX.sym("specific_thrust_command")
-    aero_coefficient_x = cs.SX.sym("aero_coefficient_x")
     state = cs.vertcat(
         position_world,
         velocity_world,
         body_rate_command,
         attitude_wxyz,
         specific_thrust_command,
-        aero_coefficient_x,
     )
     command_derivative = cs.SX.sym("command_derivative", 4)  # N/kg/s, rad/s²
-    # SIGNED: d(cx)/d(alpha). Measured negative for this airframe, so the
-    # parameter itself carries the sign. There is no per-quadrant flip.
-    cx_alpha_slope = cs.SX.sym("cx_alpha_slope")
-
     rotation_world_from_body = rotation_matrix_from_quaternion(attitude_wxyz)
-    velocity_body = rotation_world_from_body.T @ velocity_world
-    speed_squared = cs.dot(velocity_world, velocity_world)
-    # Body-FLU alpha = atan2(v_x, v_z), without an angular offset.
-    # Its exact chain rule drives the coefficient rate below; no additional
-    # angle state or separate approximate derivative is needed.
-    aerodynamic_acceleration_body = cs.vertcat(aero_coefficient_x * speed_squared, 0, 0)
-    acceleration_world = rotation_world_from_body @ (
-        cs.vertcat(0, 0, specific_thrust_command) + aerodynamic_acceleration_body
+    acceleration_world = rotation_world_from_body @ cs.vertcat(
+        0, 0, specific_thrust_command
     ) + cs.vertcat(0, 0, -9.81)
-    acceleration_body = rotation_world_from_body.T @ acceleration_world
-    # Body-coordinate velocity rate includes -omega_B x v_B; positive body-Y
-    # rotation decreases alpha at zero sideslip.
-    velocity_body_rate = acceleration_body - cs.cross(body_rate_command, velocity_body)
-    # Exact FLU chain rule. At beta=0 it reduces to
-    # alpha_dot = -omega_y + (v_z*a_x - v_x*a_z)/(v_x^2 + v_z^2).
-    numerator = velocity_body[2] * velocity_body_rate[0] - velocity_body[0] * velocity_body_rate[2]
-    denominator = velocity_body[0] ** 2 + velocity_body[2] ** 2
-    angle_of_attack_rate = numerator / denominator
-    coefficient_derivative = cs.if_else(
-        speed_squared > 1.0, cx_alpha_slope * angle_of_attack_rate, 0.0
-    )
     state_derivative = cs.vertcat(
         velocity_world,
         acceleration_world,
         command_derivative[1:4],
         0.5 * quaternion_kinematics_matrix(body_rate_command) @ attitude_wxyz,
         command_derivative[0],
-        coefficient_derivative,
     )
     model = AcadosModel()
-    model.name = "tailsitter_flu"  # generated C symbol prefix, not mathematical notation
+    model.name = "quadrotor_flu"  # generated C symbol prefix, not mathematical notation
     model.x = state
     model.xdot = cs.SX.sym("state_derivative", state.numel())
     model.u = command_derivative
-    model.p = cx_alpha_slope
     model.f_expl_expr = state_derivative
     model.f_impl_expr = model.xdot - state_derivative
     return model

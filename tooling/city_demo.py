@@ -61,7 +61,6 @@ def prepare(scene="ring", rate_tuning="auto"):
     shutil.copy2(provenance, job / "upstream-provenance.json")
     request = JobRequest(
         profile="practical",
-        aero="lyu",
         v_max=10.0,
         duration_s=240,
         overrides={

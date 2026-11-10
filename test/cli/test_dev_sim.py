@@ -1,4 +1,4 @@
-"""Staging contracts: practical+lyu, isolated ROS domain and no benchmark runs."""
+"""Staging contracts: practical quadrotor, isolated ROS domain and no benchmark runs."""
 
 import json
 import shutil
@@ -43,11 +43,11 @@ def project(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_prepared_configuration_is_practical_lyu_and_frozen(project):
+def test_prepared_configuration_is_practical_quadrotor_and_frozen(project):
     job = dev_sim.prepare(output=project / ".artifacts/dev-test")
     sim = yaml.safe_load((job / "config/simple_sim.yaml").read_text())["simple_sim"]
     plan = yaml.safe_load((job / "config/planning.yaml").read_text())["problem_formulation"]
-    assert sim["aero"]["model"] == "lyu" and sim["actuator"]["enabled"]
+    assert "aero" not in sim and sim["actuator"]["enabled"]
     assert sim["actuator"]["body_frame"] == "FLU"
     assert sim["controller"] == "nmpc" and sim["plant"]["mass"] == 2.12
     assert plan["flatness"]["mass"] == 2.12 and plan["basic_traj"]["height"] == 3

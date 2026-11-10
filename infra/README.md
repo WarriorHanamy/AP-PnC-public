@@ -12,6 +12,7 @@ PX4 integration have additional prerequisites.
 | [ROS2 development scene](DEV_SIM.md) | Interactive pillar/LiDAR simulation with pause, step and reset. | Requires a locally extracted practical actuator profile. |
 | [Live 3DGS demo](CITY_DEMO_START.md) | Closed-loop flight in a rendered city scene. | Requires licensed local scene assets and the practical actuator profile. |
 | [Gazebo / PX4](GAZEBO.md) | SITL integration with the navigation sidecar and core. | Read its validation status and build restrictions before use; complete flight acceptance is not established. |
+| [Radar learning](LEARN.md) | CIRI corridors for RL and eroded depth for YOPO. | Synthetic radar only. CIRI is SUPER's h-polytope. |
 
 Follow the [repository quick start](../README.md#quick-start) to generate the
 solver, build simple-sim and run an ideal-profile benchmark. The
@@ -24,8 +25,8 @@ record the demo's evidence and licensing boundaries.
 
 ## Layout
 
-- [sim_infra](sim_infra/) — simulator implementations, plant models and Docker stacks.
-  The [aerodynamics guide](AERODYNAMICS.md) covers aerodynamic models.
+- [sim_infra](sim_infra/) — simulator implementations, the quadrotor plant and Docker stacks.
+  [Plant scope](AERODYNAMICS.md) records that wing-force models are not included.
 - [sim_k3s](sim_k3s/) — Kubernetes manifests and dispatcher. Its
   [deployment notes](K3S.md) include legacy CLI examples; the current
   `ap-pnc` CLI does not register a `k3s` command.

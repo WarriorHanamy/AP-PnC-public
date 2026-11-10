@@ -1,4 +1,4 @@
-# AP-PnC prior-free planning configuration (phi-theory trajectory generation).
+# Quadrotor planning configuration. Thrust aligns with specific force.
 #
 # Loaded by the planner node from <AP_PNC_DIR>/bringup/config/planning.yaml.
 
@@ -36,10 +36,9 @@ problem_formulation:
     # Bounds on the FRAME-FREE tangential acceleration v.a/|v|, not rotor thrust.
     tangential_acc_min: -2.0
     tangential_acc_max: 2.0
-    # Collective specific thrust a_T = eta . z_B [N/kg]. This is the REAL thrust
-    # (the `tangential_acc_*` pair above is the frame-free v.a/|v|). A minimum
-    # keeps the plan out of the degenerate thrust-off regime where the wing alone
-    # carries more than gravity.
+    # Collective specific thrust a_T = |a + g z| [N/kg]. This is the rotor
+    # thrust (the `tangential_acc_*` pair above is the frame-free v.a/|v|).
+    # A minimum keeps the plan out of the thrust-off singularity.
     thrust_min: 2.0
     thrust_max: 22.0
     thrust_weight: 10000.0
@@ -56,15 +55,6 @@ problem_formulation:
     integral_intervs: 30
     rel_cost_tol: 1.0e-05
   flatness:
-    phi:
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - -0.09408
     mass: 2.0
   # Only consumed when corridor_source: map_sfc.
   map:

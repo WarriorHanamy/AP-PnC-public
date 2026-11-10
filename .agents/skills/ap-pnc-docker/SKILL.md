@@ -19,14 +19,13 @@ Set absolute `AP_PNC_DIR`. These commands dispatch Linux containers:
 uv run --project "$AP_PNC_DIR" ap-pnc build planner --arch arm64
 uv run --project "$AP_PNC_DIR" ap-pnc build nmpc --arch arm64
 uv run --project "$AP_PNC_DIR" ap-pnc build planner-bindings --arch arm64
-uv run --project "$AP_PNC_DIR" ap-pnc test vmap --arch arm64
 uv run --project "$AP_PNC_DIR" ap-pnc test colcon --arch arm64
 uv run --project "$AP_PNC_DIR" ap-pnc test colcon-result --arch arm64
 ```
 
 Choose `amd64` for the other target; these build/test options also accept
 `aarch64`/`x86_64`. The default is the host CPU. `build all` builds the core
-workspace, not nav_infra. `test all` runs the legacy lu_mpc numerical tests,
+workspace, not nav_infra. `test colcon` runs the ROS workspace tests,
 not every repository test. Run colcon tests after building the relevant packages.
 For the offline stack use `ap-pnc build simple-sim`; for the interactive sensor
 image use `ap-pnc dev-sim build`. Neither currently exposes `--arch`.

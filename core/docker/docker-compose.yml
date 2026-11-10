@@ -9,7 +9,6 @@ x-dev: &dev
   volumes:
     - ${AP_PNC_DIR:?Set absolute AP_PNC_DIR}/core/ros_packages:/workspace/src:rw
     - ${AP_PNC_DIR}/core/bringup:/workspace/bringup:rw
-    - ${AP_PNC_DIR}/infra/sim_infra/aerodynamics:/workspace/infra/sim_infra/aerodynamics:ro
     - ${AP_PNC_DIR}/.artifacts/nmpc_solver:/workspace/.artifacts/nmpc_solver:ro
   stdin_open: true
   tty: true
@@ -27,7 +26,6 @@ services:
     volumes:
       - ${AP_PNC_DIR}/core/ros_packages:/workspace/src:rw
       - ${AP_PNC_DIR}/core/bringup:/workspace/bringup:rw
-      - ${AP_PNC_DIR}/infra/sim_infra/aerodynamics:/workspace/infra/sim_infra/aerodynamics:ro
       - ${AP_PNC_DIR}/.artifacts/nmpc_solver/libnmpc_bundle_x86_64.a:/workspace/.artifacts/nmpc_solver/libnmpc_bundle_x86_64.a:ro
       - ${AP_PNC_DIR}/.artifacts/docker-dev/amd64/colcon:/workspace/.artifacts/colcon
   ros2-dev-arm64:
@@ -42,6 +40,5 @@ services:
     volumes:
       - ${AP_PNC_DIR}/core/ros_packages:/workspace/src:rw
       - ${AP_PNC_DIR}/core/bringup:/workspace/bringup:rw
-      - ${AP_PNC_DIR}/infra/sim_infra/aerodynamics:/workspace/infra/sim_infra/aerodynamics:ro
       - ${AP_PNC_DIR}/.artifacts/nmpc_solver/libnmpc_bundle_aarch64.a:/workspace/.artifacts/nmpc_solver/libnmpc_bundle_aarch64.a:ro
       - ${AP_PNC_DIR}/.artifacts/docker-dev/arm64/colcon:/workspace/.artifacts/colcon

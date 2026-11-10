@@ -35,23 +35,11 @@ def load_nmpc_settings(path: Path | None = None) -> dict:
         "traj_res_s",
         "ctrl_frq",
         "initial_specific_thrust",
-        "cx_alpha_slope",
         "objective",
         "command_bounds",
     }
-    # Runtime-only keys are read by the controller, not baked into the OCP.
-    runtime = {
-        "cx_slope_estimation",
-        "cx_slope_forgetting",
-        "cx_slope_limit",
-        "cx_slope_covariance_limit",
-        "cx_slope_min_excitation",
-        "cx_slope_lag_s",
-    }
-    if set(settings) != required | runtime:
+    if set(settings) != required:
         raise ValueError("missing or unsupported NMPC settings keys")
-    for name in runtime:
-        settings[name] = settings[name]
     if set(settings["objective"]) != {"position", "velocity", "body_y", "command_derivative"}:
         raise ValueError("unsupported objective keys")
     if set(settings["command_bounds"]) != {"lower", "upper"}:
@@ -68,12 +56,6 @@ def load_nmpc_settings(path: Path | None = None) -> dict:
         raise ValueError("NMPC horizon must contain an integer number of intervals")
     if round(ratio) < 1:
         raise ValueError("NMPC horizon must contain at least one interval")
-    slope = float(settings["cx_alpha_slope"])
-    # SIGNED slope: d(cx)/d(alpha). Negative for this airframe; any finite value
-    # is accepted because the sign is a physical property, not a convention.
-    if not np.isfinite(slope):
-        raise ValueError("invalid cx alpha slope")
-    settings["cx_alpha_slope"] = slope
     for name, count in (("position", 3), ("velocity", 3), ("body_y", 3), ("command_derivative", 4)):
         values = np.asarray(settings["objective"][name], dtype=float)
         if values.shape != (count,) or not np.isfinite(values).all() or (values < 0).any():
@@ -100,11 +82,11 @@ def ocp_nls() -> AcadosOcp:
     import casadi as cs
     from acados_template import AcadosOcp
 
-    from tooling.nmpc_gen.model import create_tailsitter_model, rotation_matrix_from_quaternion
+    from tooling.nmpc_gen.model import create_quadrotor_model, rotation_matrix_from_quaternion
 
     settings = load_nmpc_settings()
     ocp = AcadosOcp()
-    model = create_tailsitter_model()
+    model = create_quadrotor_model()
     ocp.model = model
     rotation_world_from_body = rotation_matrix_from_quaternion(model.x[9:13])
     tracking_output = cs.vertcat(model.x[:3], model.x[3:6], rotation_world_from_body[:, 1])
@@ -117,8 +99,9 @@ def ocp_nls() -> AcadosOcp:
     ocp.cost.yref_0 = np.zeros(13)
     ocp.cost.yref = np.zeros(13)
     ocp.cost.yref_e = np.zeros(9)
-    ocp.parameter_values = np.zeros(1)
-    assert (model.x.numel(), model.u.numel(), model.p.numel()) == (15, 4, 1)
+    ocp.parameter_values = np.zeros(0)
+    assert (model.x.numel(), model.u.numel()) == (14, 4)
+    assert model.p is None or int(model.p.numel()) == 0
     objective = settings["objective"]
     tracking_weights = np.concatenate([objective[k] for k in ("position", "velocity", "body_y")])
     stage_weights = np.diag(np.concatenate((tracking_weights, objective["command_derivative"])))
@@ -130,7 +113,7 @@ def ocp_nls() -> AcadosOcp:
 
     ocp.solver_options.N_horizon = round(settings["horizon_s"] / settings["traj_res_s"])
     ocp.solver_options.tf = settings["horizon_s"]
-    initial_state = np.zeros(15)
+    initial_state = np.zeros(14)
     initial_state[9] = 1.0
     initial_state[13] = settings["initial_specific_thrust"]
     ocp.constraints.x0 = initial_state

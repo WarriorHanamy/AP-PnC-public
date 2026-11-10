@@ -6,13 +6,14 @@ extern "C"
 {
 #endif
 
-/* x = [p(3), v(3), rate_command(3), q_wxyz(4), thrust_command N/kg, k_aero].
- * u = d[thrust_command, rate_command_xyz]/dt. No actuator lag or rotor states.
+/* Quadrotor command integrator.
+ * x = [p(3), v(3), rate_command(3), q_wxyz(4), thrust_command N/kg].
+ * u = d[thrust_command, rate_command_xyz]/dt. No actuator lag, rotor states,
+ * or wing-force coefficient.
  * y = [p(3), v(3), yb(3), command_derivative(4)]; terminal = [p,v,yb]. */
-#define NMPC_SOLVER_ABI 3
-#define NMPC_NX 15
+#define NMPC_SOLVER_ABI 4
+#define NMPC_NX 14
 #define NMPC_NU 4
-#define NMPC_NP 1
 #define NMPC_NY 13
 #define NMPC_NYN 9
 
@@ -28,8 +29,7 @@ extern "C"
   void nmpc_solver_set_state(nmpc_solver_t *s, const double x_cur[NMPC_NX]);
 
   void nmpc_solver_set_ref_stage(nmpc_solver_t *s, int stage,
-                                 const double y_ref[NMPC_NY],
-                                 const double p[NMPC_NP]);
+                                 const double y_ref[NMPC_NY]);
 
   void nmpc_solver_set_ref_terminal(nmpc_solver_t *s,
                                     const double   y_ref_e[NMPC_NYN]);

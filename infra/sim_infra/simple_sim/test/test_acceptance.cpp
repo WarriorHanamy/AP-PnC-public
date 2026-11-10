@@ -65,16 +65,14 @@ int main()
     std::shared_ptr<const planner::core::ReferenceTrajectory> reference;
     std::ostringstream                                        summary;
     summary << std::setprecision(17)
-            << "{\n  \"planning_v_max_mps\": 9.0,\n  \"controller\": "
-               "\"nmpc\",\n  \"cases\": [\n";
+            << "{\n  \"planning_v_max_mps\": 9.0,\n  \"vehicle\": "
+               "\"quadrotor\",\n  \"controller\": \"nmpc\",\n  \"cases\": [\n";
     bool first_case = true;
-    // Acceptance order is intentional: first no aero, then Zhang-Lyu.
-    for (const std::string model : {"none", "lyu"})
+    for (const std::string model : {"quadrotor"})
     {
-      auto sim                           = YAML::Clone(base);
-      sim["simple_sim"]["controller"]    = "nmpc";
-      sim["simple_sim"]["duration_s"]    = 0.0;
-      sim["simple_sim"]["aero"]["model"] = model;
+      auto sim                        = YAML::Clone(base);
+      sim["simple_sim"]["controller"] = "nmpc";
+      sim["simple_sim"]["duration_s"] = 0.0;
       const auto input = suite / ("simple_sim_" + model + ".yaml");
       yaml_file(input, sim);
       std::vector<fs::path> runs;
@@ -106,7 +104,7 @@ int main()
       if (!first_case)
         summary << ",\n";
       first_case = false;
-      summary << "    {\"aero\": " << std::quoted(model)
+      summary << "    {\"vehicle\": " << std::quoted(model)
               << ", \"completed\": true, \"exact_replay\": true"
               << ", \"sampled_reference_peak_mps\": " << max_reference_speed
               << ", \"actual_peak_mps\": " << max_actual_speed
@@ -122,7 +120,7 @@ int main()
     summary_file.exceptions(std::ios::failbit | std::ios::badbit);
     summary_file << summary.str();
     summary_file.close();
-    std::cout << "PASS ordered NMPC acceptance: none -> lyu, v_max=9 m/s, "
+    std::cout << "PASS quadrotor NMPC acceptance: v_max=9 m/s, "
                  "exact same reference and repeatable runs\n"
               << "Summary: " << suite / "acceptance.json" << '\n';
     return 0;

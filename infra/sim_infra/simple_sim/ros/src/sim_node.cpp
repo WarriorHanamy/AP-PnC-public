@@ -50,7 +50,7 @@ namespace simple_sim
       odom_pub_   = create_publisher<nav_msgs::msg::Odometry>("~/odom", 10);
       imu_pub_    = create_publisher<sensor_msgs::msg::Imu>("~/imu", 10);
       wrench_pub_ = create_publisher<geometry_msgs::msg::WrenchStamped>(
-          "~/aero_wrench", 10);
+          "~/external_wrench", 10);
       actual_pub_    = create_publisher<nav_msgs::msg::Path>("~/path", 1);
       reference_pub_ = create_publisher<nav_msgs::msg::Path>(
           "~/reference", rclcpp::QoS(1).transient_local());
@@ -235,8 +235,8 @@ namespace simple_sim
       imu_pub_->publish(imu);
       geometry_msgs::msg::WrenchStamped wrench;
       wrench.header        = imu.header;
-      wrench.wrench.force  = vector(f.aerodynamic.force);
-      wrench.wrench.torque = vector(f.aerodynamic.moment);
+      wrench.wrench.force  = vector(f.external.force);
+      wrench.wrench.torque = vector(f.external.moment);
       wrench_pub_->publish(wrench);
       geometry_msgs::msg::PoseStamped pose;
       pose.header         = odom.header;

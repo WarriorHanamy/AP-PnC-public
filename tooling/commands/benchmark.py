@@ -77,15 +77,11 @@ def run(
 @app.callback(invoke_without_command=True)
 def benchmark(
     ctx: typer.Context,
-    aero: str = typer.Option("lyu", "--aero", help="Comma list of aero models: none, lyu, phi"),
     vmax: str = typer.Option("8,10,12", "--vmax", help="Comma list of speed caps [m/s]"),
     variants: str = typer.Option(
-        "se3-aero-ff,se3-base,nmpc",
+        "se3,nmpc",
         "--variants",
-        help=(
-            "Controller variants: se3-aero-ff (aerodynamic feedforward forced on), "
-            "se3-base (forced off), nmpc"
-        ),
+        help="Controller variants: se3 (geometric) and nmpc (quadrotor command integrator)",
     ),
     duration: float = typer.Option(0.0, "--duration", help="Run length [s]; 0 = whole trajectory"),
     profile: str = typer.Option(
@@ -97,18 +93,15 @@ def benchmark(
     mass: float = typer.Option(2.0, "--mass", help="Vehicle mass [kg]"),
     output: str = typer.Option("", "--output", "-o", help="Output directory"),
 ) -> None:
-    """Run the whole matrix and print one table; this is what `ap-pnc benchmark` does.
+    """Run the quadrotor SE3-versus-NMPC matrix and print one table.
 
-    Runs the simple_sim stack (plan -> control -> plant) for every combination and
-    prints the whole table at the end, including the per-row change from the SE3
-    baseline to the SE3 aerodynamic feedforward variant. Controller gains come from
-    core/bringup/config/simple_sim.yaml.
+    The plant is a quadrotor. There is no aerodynamic model to select. Controller
+    gains come from core/bringup/config/simple_sim.yaml.
     """
     if ctx.invoked_subcommand is not None:
         return
 
     rows = stack_sweep.run_matrix(
-        aeros=tuple(a.strip() for a in aero.split(",") if a.strip()),
         v_maxs=tuple(float(v) for v in vmax.split(",") if v.strip()),
         variants=tuple(v.strip() for v in variants.split(",") if v.strip()),
         duration_s=duration,

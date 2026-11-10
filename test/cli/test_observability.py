@@ -48,7 +48,7 @@ def test_attributes_fail_closed():
             "authorization": "secret",
             "path": "/private/source",
             "ap.pnc.tick": True,
-            "ap.pnc.model.aero": "secret model",
+            "ap.pnc.model.vehicle": "tailsitter",
             "ap.pnc.sim_time_ns": 123,
             "ap.pnc.frame.body": "FLU",
             "ap.pnc.experiment.id": "bad",

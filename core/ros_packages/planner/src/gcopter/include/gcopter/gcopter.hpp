@@ -45,7 +45,7 @@
 #include <cfloat>
 #include <cmath>
 #include <iostream>
-#include <tailsitter_df/flu_flatness.hpp>
+#include <quadrotor_df/flu_flatness.hpp>
 #include <vector>
 
 #include "gcopter/geo_utils.hpp"
@@ -67,11 +67,9 @@ namespace gcopter
     double thrust_weight;
     double time_weight;
     double omg_consistent_weight;
-    // FLU flatness parameters. The limit semantics are pure FLU body axes and a
-    // frame-free tangential acceleration; see gcopter.hpp and
-    // tailsitter_df/flu_flatness.hpp.
+    // Quadrotor FLU flatness. Thrust aligns with specific force; there is no
+    // wing-force slope. See quadrotor_df/flu_flatness.hpp.
     double  flatness_gravity;
-    double  flatness_aero_slope;
     double &rho;
     // singleton acquisition
     static CostConfig &getInstance()
@@ -105,7 +103,6 @@ namespace gcopter
       thrust_weight         = 0.0;
       time_weight           = 0.0;
       flatness_gravity      = 9.81;
-      flatness_aero_slope   = -0.09408;
     }
   };
 
@@ -407,16 +404,15 @@ namespace gcopter
       // Frame-free tangential acceleration v.a/|v| (kept from the legacy cost;
       // the yaml key `tangential_acc_min/max` bounds THIS quantity, not rotor
       // thrust).
-      double                           tangential_acc;
-      Eigen::Vector4d                  quat;
-      Eigen::Vector3d                  omg;
-      double                           gradTangentialAcc;
-      Eigen::Vector4d                  gradQuat;
-      Eigen::Vector3d                  gradPos, gradVel, gradAcc;
-      Eigen::Vector3d                  gradOmg;
-      tailsitter_df::FluFlatnessParams flatness_params;
+      double                          tangential_acc;
+      Eigen::Vector4d                 quat;
+      Eigen::Vector3d                 omg;
+      double                          gradTangentialAcc;
+      Eigen::Vector4d                 gradQuat;
+      Eigen::Vector3d                 gradPos, gradVel, gradAcc;
+      Eigen::Vector3d                 gradOmg;
+      quadrotor_df::FluFlatnessParams flatness_params;
       flatness_params.gravity = config.flatness_gravity;
-      flatness_params.k       = config.flatness_aero_slope;
 
       double                      step, alpha;
       double                      s1, s2, s3, s4, s5;
@@ -465,7 +461,7 @@ namespace gcopter
           // FLU flatness: pure ENU/FLU body rates plus the frame-free
           // tangential acceleration. The legacy mixed-frame kernel is gone.
           const auto flatness =
-              tailsitter_df::flu_flatness(vel, acc, jer, flatness_params);
+              quadrotor_df::flu_flatness(vel, acc, jer, flatness_params);
           const double speed_norm = vel.norm();
           tangential_acc = speed_norm > 1e-9 ? vel.dot(acc) / speed_norm : 0.0;
           omg            = flatness.omega;

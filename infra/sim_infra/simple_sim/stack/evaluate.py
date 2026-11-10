@@ -13,9 +13,8 @@ import yaml
 from tooling import simple_stack
 from tooling.env import artifact_path, project_path
 
-# Only models marked under_test (plus the null control) may appear in a campaign.
-# See infra/sim_infra/aerodynamics/include/aerodynamics/aero_models.hpp.
-MODELS = ("none", "lyu", "phi")
+# One quadrotor plant. There is no aerodynamic-model axis.
+MODELS = ("quadrotor",)
 
 
 def sha(path):
@@ -60,7 +59,7 @@ def run(out, profile, duration, vmax=6.0, hold=0.0, mass=None):
         item = {"model": model, "driver_exit": 1, "log": str(log)}
         try:
             job = simple_stack.run_job(simple_stack.JobRequest(
-                profile=profile, aero=model, v_max=vmax, hold_s=hold,
+                profile=profile, v_max=vmax, hold_s=hold,
                 mass_kg=mass, duration_s=duration,
             ))
             log.write_text((job / "stack.log").read_text())
@@ -90,7 +89,7 @@ def plot(out):
             continue
         folder = project_path(item["run"])
         manifest = json.loads((folder / "manifest.json").read_text())
-        integrator = manifest.get("nmpc_solver_abi") == 3
+        integrator = manifest.get("nmpc_solver_abi") == 4
         yb_start = 6 if integrator else 9
         data = rows(folder / "steps.csv")
         trace = (

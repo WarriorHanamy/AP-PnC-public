@@ -55,7 +55,6 @@ never inside a source tree:
 | NMPC static bundle | `<AP_PNC_DIR>/.artifacts/nmpc_solver/libnmpc_bundle_<arch>.a` (no untagged alias) |
 | pybind11 modules (+ their build temp) | `<AP_PNC_DIR>/.artifacts/bindings/` |
 | benchmark runs | `<AP_PNC_DIR>/.artifacts/benchmark/<name>/` |
-| aerodynamics CSV datasets / ML weights | `<AP_PNC_DIR>/.artifacts/aerodynamics/` |
 | paper figure cache and figures | `<AP_PNC_DIR>/.artifacts/paper/{cache,figures}/` |
 | pytest / ruff caches | `<AP_PNC_DIR>/.artifacts/tests/`, `<AP_PNC_DIR>/.artifacts/ruff_cache/` |
 
@@ -68,8 +67,7 @@ Rules:
 - Resolve paths **absolutely**, anchored at the project root
   (`tooling.env.get_git_root()` in Python, `AP_PNC_DIR` in C++/containers).
 - Python code resolves root-relative inputs via `tooling.env.project_path()` and
-  confines generated outputs via `tooling.env.artifact_path()`; C++ aerodynamics
-  code uses `aerodynamics/paths` from `aerodynamics/project_paths.hpp`.
+  confines generated outputs via `tooling.env.artifact_path()`.
 - Docker Compose files resolve every context, dockerfile, and volume against an
   absolute `AP_PNC_DIR` (`${AP_PNC_DIR:?...}`); the tooling exports it (`tooling.docker_runtime`, `tooling.simple_stack`, and the
   K3s simulation management).

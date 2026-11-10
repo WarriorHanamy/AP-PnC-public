@@ -33,9 +33,6 @@ import yaml
 
 from tooling.env import artifact_path, get_git_root, project_path, setup_env
 
-#: Canonical aerodynamic models the driver accepts; the validation status of each
-#: lives in aerodynamics/aero_models.hpp and "configured" leaves the yaml alone.
-AERO_MODELS: Final = ("configured", "none", "lyu", "phi")
 PROFILES: Final = ("ideal", "practical")
 
 _STACK_DIR: Final = "infra/sim_infra/simple_sim/stack"
@@ -70,7 +67,6 @@ class JobRequest:
     """One simulation request; shared profile/overrides, independent job lifecycles."""
 
     profile: str = "ideal"
-    aero: str = "configured"
     v_max: float | None = None
     hold_s: float = 0.0
     mass_kg: float | None = None
@@ -84,8 +80,6 @@ class JobRequest:
     def validate(self) -> None:
         if self.profile not in PROFILES:
             raise ValueError(f"profile must be one of {PROFILES}, got {self.profile!r}")
-        if self.aero not in AERO_MODELS:
-            raise ValueError(f"aero must be one of {AERO_MODELS}, got {self.aero!r}")
         for name, value in (
             ("duration_s", self.duration_s),
             ("hold_s", self.hold_s),
@@ -196,13 +190,11 @@ def write_configuration(job: Path, request: JobRequest) -> None:
             )
         )
 
-    if request.aero != "configured":
-        simple_sim["simple_sim"]["aero"]["model"] = request.aero
     if request.v_max is not None:
         planning["problem_formulation"]["cost"]["v_max"] = request.v_max
 
     # Override paths are file-relative and start at the document root the file
-    # already carries, e.g. "simple_sim.se3.aero_flatness_feedforward" or
+    # already carries, e.g. "simple_sim.controller" or
     # "problem_formulation.cost.v_max". Unknown roots are rejected instead of
     # silently writing a key nobody reads.
     documents: dict[str, dict] = {
@@ -245,7 +237,7 @@ def _write_metadata(job: Path) -> None:
         (
             artifact_path(
                 f".artifacts/nmpc_build/{solver_arch()}/c_generated_code/"
-                "acados_ocp_tailsitter_flu.json"
+                "acados_ocp_quadrotor_flu.json"
             )
         ).read_text()
     )
@@ -342,9 +334,9 @@ def _image_exists(name: str) -> bool:
 def _ensure_stack_base_images(root, arch, platform, run) -> None:
     """Ensure ROS dependencies and refresh the simulator's source/config image.
 
-    The mounted executable and image-owned aerodynamic parameters must come
-    from the same source contract. Docker's layer cache handles unchanged inputs;
-    the existence of an image tag is not evidence its model data is current.
+    The mounted executable and the image must come from the same source
+    contract. Docker's layer cache handles unchanged inputs; an image tag is
+    not evidence that the quadrotor plant inside it is current.
     """
     if not _image_exists(f"ap-pnc-ros2-base:{arch}"):
         run(

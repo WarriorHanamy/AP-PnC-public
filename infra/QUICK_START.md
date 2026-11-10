@@ -10,14 +10,14 @@ git clone https://github.com/SYSU-HILAB/AP-PnC.git "$AP_PNC_DIR"
 uv sync --project "$AP_PNC_DIR"
 uv run --project "$AP_PNC_DIR" ap-pnc gen-nmpc-lib
 uv run --project "$AP_PNC_DIR" ap-pnc build simple-sim
-uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --aero lyu --vmax 8
+uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --vmax 8
 ```
 
 `uv` orchestrates Docker builds and simulation jobs. The benchmark compares
-SE3 control with and without aerodynamic feedforward against NMPC, saves the
-results, and prints a comparison table.
+geometric SE3 control with NMPC on the quadrotor plant, saves the results, and
+prints a comparison table.
 
-Use `--aero none,lyu,phi --vmax 8,10,12` for a larger sweep.
+Use `--vmax 8,10,12` for more than one speed cap.
 The `ideal` profile is ready to use; `practical` requires locally extracted
 actuator parameters.
 
@@ -46,7 +46,7 @@ not asset-free. Its [acceptance results](CITY_DEMO.md) and
 ## ROS2 development scene
 
 The interactive simulator combines a point-cloud scene, pose-dependent LiDAR,
-Lyu aerodynamics and practical actuation, with pause, step and reset controls.
+the quadrotor plant and practical actuation, with pause, step and reset controls.
 It requires the local practical actuator profile.
 
 ```bash
