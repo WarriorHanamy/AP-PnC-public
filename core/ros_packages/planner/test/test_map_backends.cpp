@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <planner_core/ciri.hpp>
 #include <planner_core/corridor_adapter.hpp>
 #include <planner_core/map_query.hpp>
 #include <planner_core/planner.hpp>
@@ -44,11 +45,8 @@ TEST(MapBackends, DefaultBuildKeepsVoxelAndFiri)
   EXPECT_TRUE(planner::core::map_backend_available("voxel"));
   EXPECT_FALSE(planner::core::map_backend_available("rog"));
   EXPECT_TRUE(planner::core::corridor_backend_available("firi"));
-  EXPECT_FALSE(planner::core::corridor_backend_available("ciri"));
+  EXPECT_TRUE(planner::core::corridor_backend_available("ciri"));
   EXPECT_FALSE(planner::core::make_rog_map_adapter("")->available());
-  EXPECT_THROW(planner::core::make_corridor_adapter("ciri", {},
-                                                    [](const std::string &) {}),
-               std::invalid_argument);
 }
 
 TEST(MapBackends, VoxelAdapterMatchesTheMapAndFiriBoundsAnEmptyScene)
@@ -77,6 +75,32 @@ TEST(MapBackends, VoxelAdapterMatchesTheMapAndFiriBoundsAnEmptyScene)
   {
     EXPECT_EQ(poly.cols(), 4);
   }
+}
+
+TEST(MapBackends, CiriHalfspacesSeparateASideObstacle)
+{
+  Eigen::Matrix<double, 6, 4> bounds = Eigen::Matrix<double, 6, 4>::Zero();
+  bounds(0, 0)                       = 1.0;
+  bounds(0, 3)                       = -3.0;
+  bounds(1, 0)                       = -1.0;
+  bounds(1, 3)                       = -3.0;
+  bounds(2, 1)                       = 1.0;
+  bounds(2, 3)                       = -3.0;
+  bounds(3, 1)                       = -1.0;
+  bounds(3, 3)                       = -3.0;
+  bounds(4, 2)                       = 1.0;
+  bounds(4, 3)                       = -3.0;
+  bounds(5, 2)                       = -1.0;
+  bounds(5, 3)                       = -3.0;
+  const std::vector<Eigen::Vector3d> obstacles{{1.2, 0.0, 0.0}};
+  Eigen::MatrixX4d                   polytope;
+  ASSERT_TRUE(planner::core::ciri_decompose(
+      bounds, obstacles, Eigen::Vector3d(0.0, -1.0, 0.0),
+      Eigen::Vector3d(0.0, 1.0, 0.0), 0.2, 2, polytope));
+  EXPECT_TRUE(inside(polytope, Eigen::Vector3d::Zero()));
+  EXPECT_TRUE(inside(polytope, Eigen::Vector3d(0.0, -1.0, 0.0)));
+  EXPECT_TRUE(inside(polytope, Eigen::Vector3d(0.0, 1.0, 0.0)));
+  EXPECT_FALSE(inside(polytope, obstacles.front()));
 }
 
 TEST(MapBackends, WaypointRouteReplacesTheDefaultCircleSeed)

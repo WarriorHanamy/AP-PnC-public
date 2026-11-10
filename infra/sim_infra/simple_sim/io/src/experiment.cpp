@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
+#include <gcopter/voxel_map.hpp>
 #include <iomanip>
 #include <limits>
 #include <planner_core/planner.hpp>
@@ -77,6 +79,120 @@ namespace simple_sim
       vector_csv(out, a.velocity_body);
       out << ',' << a.valid;
     }
+    voxel_map::VoxelMap load_point_cloud_map(const std::string &path,
+                                             double voxel, double margin,
+                                             double dilate_radius)
+    {
+      std::ifstream file(path, std::ios::binary);
+      if (!file)
+        throw std::runtime_error("cannot read map point cloud " + path);
+      std::string line;
+      std::string format;
+      int         count  = -1;
+      bool        binary = false;
+      int         stride = 0;
+      int         x_off  = -1;
+      int         y_off  = -1;
+      int         z_off  = -1;
+      int         cursor = 0;
+      bool        vertex = false;
+      while (std::getline(file, line))
+      {
+        if (!line.empty() && line.back() == '\r')
+          line.pop_back();
+        if (line.rfind("format ", 0) == 0)
+          format = line.substr(7);
+        else if (line.rfind("element vertex ", 0) == 0)
+        {
+          count  = std::stoi(line.substr(15));
+          vertex = true;
+          cursor = 0;
+        }
+        else if (line.rfind("element ", 0) == 0)
+          vertex = false;
+        else if (vertex && line.rfind("property ", 0) == 0)
+        {
+          const auto name  = line.substr(line.rfind(' ') + 1);
+          const int  width = line.find("float") != std::string::npos ||
+                                    line.find("float32") != std::string::npos
+                                 ? 4
+                                 : 0;
+          if (width == 0)
+            throw std::runtime_error(
+                "point cloud properties must be float xyz");
+          if (name == "x")
+            x_off = cursor;
+          else if (name == "y")
+            y_off = cursor;
+          else if (name == "z")
+            z_off = cursor;
+          cursor += width;
+        }
+        else if (line == "end_header")
+          break;
+      }
+      if (count < 1 || x_off < 0 || y_off < 0 || z_off < 0)
+        throw std::runtime_error("point cloud header has no xyz vertices");
+      stride = cursor;
+      binary = format.find("binary_little_endian") != std::string::npos;
+      if (!binary && format.find("ascii") == std::string::npos)
+        throw std::runtime_error(
+            "point cloud must be ascii or binary little endian");
+      std::vector<Eigen::Vector3d> points;
+      points.reserve(static_cast<std::size_t>(count));
+      if (binary)
+      {
+        std::vector<char> row(static_cast<std::size_t>(stride));
+        for (int index = 0; index < count; ++index)
+        {
+          file.read(row.data(), stride);
+          if (!file)
+            throw std::runtime_error("point cloud payload truncated");
+          float xyz[3];
+          std::memcpy(xyz, row.data() + x_off, 4);
+          std::memcpy(xyz + 1, row.data() + y_off, 4);
+          std::memcpy(xyz + 2, row.data() + z_off, 4);
+          if (std::isfinite(xyz[0]) && std::isfinite(xyz[1]) &&
+              std::isfinite(xyz[2]))
+            points.emplace_back(xyz[0], xyz[1], xyz[2]);
+        }
+      }
+      else
+      {
+        for (int index = 0; index < count; ++index)
+        {
+          double x = 0, y = 0, z = 0;
+          if (!(file >> x >> y >> z))
+            throw std::runtime_error("point cloud ascii payload truncated");
+          if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z))
+            points.emplace_back(x, y, z);
+        }
+      }
+      if (points.empty() || !(voxel > 0.0) || !(margin >= 0.0))
+        throw std::runtime_error("point cloud map is empty or invalid");
+      Eigen::Vector3d lo = points.front();
+      Eigen::Vector3d hi = points.front();
+      for (const Eigen::Vector3d &point : points)
+      {
+        lo = lo.cwiseMin(point);
+        hi = hi.cwiseMax(point);
+      }
+      lo -= Eigen::Vector3d::Constant(margin);
+      hi += Eigen::Vector3d::Constant(margin);
+      const Eigen::Vector3i size =
+          ((hi - lo) / voxel).array().ceil().cast<int>().matrix() +
+          Eigen::Vector3i::Ones();
+      if ((size.array() <= 1).any() || size.cast<long>().prod() > 20000000L)
+        throw std::runtime_error("point cloud voxel grid is an unsafe size");
+      voxel_map::VoxelMap map(size, lo, voxel);
+      for (const Eigen::Vector3d &point : points)
+        map.setOccupied(point);
+      const int cells =
+          std::max(1, static_cast<int>(std::ceil(dilate_radius / voxel)));
+      map.dilate(cells);
+      return map;
+    }
+
     void state_csv(std::ostream &out, const State &s)
     {
       vector_csv(out, s.position);
@@ -142,6 +258,22 @@ namespace simple_sim
         trajectory_ = std::move(cached_reference);
         if (trajectory_->empty())
           throw std::invalid_argument("empty cached planner reference");
+      }
+      else if (!planning.problem.map.point_cloud.empty())
+      {
+        // Pillar forest as a point cloud: CIRI (or the selected backend)
+        // replaces the fixed box corridor.
+        const auto cloud =
+            load_point_cloud_map(planning.problem.map.point_cloud,
+                                 planning.problem.map.voxel_scale_m,
+                                 planning.problem.map.bounds_margin_m,
+                                 planning.problem.map.dilate_radius_m);
+        auto planned = planner.plan_map_route(cloud);
+        if (!planned || planned->empty())
+          throw std::runtime_error("point-cloud corridor planning failed");
+        trajectory_ =
+            std::make_shared<const planner::core::ReferenceTrajectory>(
+                std::move(*planned));
       }
       else
       {
@@ -555,8 +687,7 @@ namespace simple_sim
         << ",\n  \"nmpc_prediction_model\": \""
         << (config_.controller == "nmpc" ? "command_integrator"
                                          : "not_applicable")
-        << "\""
-        << ",\n  \"nmpc_aero_axis\": "
+        << "\"" << ",\n  \"nmpc_aero_axis\": "
         << json_string(config_.controller == "nmpc" ? "body_x_lumped"
                                                     : "not_applicable")
         << ",\n  \"arm_length_scale\": " << config_.arm_length_scale

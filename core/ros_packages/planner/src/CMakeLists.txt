@@ -11,6 +11,7 @@ add_library(planner_core STATIC
   trajectory.cpp
   grid_astar.cpp
   corridor_adapter.cpp
+  ciri.cpp
   waypoint_route.cpp
   rog_map_adapter.cpp
 )

@@ -75,6 +75,7 @@ class JobRequest:
     hold_s: float = 0.0
     mass_kg: float | None = None
     duration_s: float = 0.0
+    point_cloud: Path | None = None
 
     #: Dotted yaml overrides applied to the job's own configuration copy, keyed by
     #: the document root ("simple_sim.controller", "problem_formulation.cost.v_max",
@@ -523,6 +524,20 @@ def run_job(request: JobRequest | None = None, *, job: Path | None = None) -> Pa
         shutil.copy2(extracted / "provenance.json", job / "upstream-provenance.json")
 
     write_configuration(job, request)
+    if request.point_cloud is not None:
+        cloud = request.point_cloud.expanduser()
+        if not cloud.is_absolute() or not cloud.is_file():
+            raise FileNotFoundError(f"point cloud must be an existing absolute file: {cloud}")
+        scene = job / "scene"
+        scene.mkdir()
+        destination = scene / cloud.name
+        shutil.copy2(cloud, destination)
+        planning_path = job / "config" / "planning.yaml"
+        planning = yaml.safe_load(planning_path.read_text())
+        planning["problem_formulation"].setdefault("map", {})["point_cloud"] = (
+            f"{_JOB_IN_CONTAINER}/scene/{destination.name}"
+        )
+        planning_path.write_text(yaml.safe_dump(planning, sort_keys=False))
     _write_metadata(job)
 
     result = _container(

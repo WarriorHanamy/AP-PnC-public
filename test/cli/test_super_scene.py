@@ -113,9 +113,10 @@ def test_high_speed_sensor_matches_the_published_benchmark():
     )["problem_formulation"]
     assert mission["waypoints"] == [[0.0, -50.0, 1.5], [0.0, 50.0, 1.5], [0.0, -50.0, 1.5]]
     assert mission["basic_traj"]["type"] == 4
-    assert mission["cost"]["v_max"] == 8.0
+    assert mission["cost"]["v_max"] == 12.0
+    assert mission["corridor_source"] == "map_sfc"
     assert mission["map_backend"] == "voxel"
-    assert mission["corridor_backend"] == "firi"
+    assert mission["corridor_backend"] == "ciri"
     default = yaml.safe_load((ROOT / "core/bringup/config/planning.yaml").read_text())
     assert default["problem_formulation"]["corridor_source"] == "box_sfc"
     assert "waypoints" not in default["problem_formulation"]

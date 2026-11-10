@@ -94,8 +94,8 @@ namespace planner::core
      *
      * Unlike plan(), the corridor comes from `map` instead of a fixed box
      * around basic_traj_. The default backend is grid A* + FIRI.
-     * `corridor_backend` selects that path or, when an external ROS-free CIRI
-     * is linked, CIRI. The polytope type stays `std::vector<Eigen::MatrixX4d>`.
+     * `corridor_backend: ciri` uses the in-tree CIRI inflation instead.
+     * The polytope type stays `std::vector<Eigen::MatrixX4d>`.
      * `iniState`/`finState` are full position/velocity/acceleration boundary
      * conditions (GCOPTER enforces them exactly), so chaining calls with each
      * leg's `finState` as the next leg's `iniState` produces a trajectory that
@@ -108,6 +108,15 @@ namespace planner::core
      */
     std::optional<ReferenceTrajectory> plan_corridor(
         const Eigen::Matrix3d &iniState, const Eigen::Matrix3d &finState,
+        const voxel_map::VoxelMap &map);
+
+    /**
+     * @brief Chain waypoint legs through `map` with the selected corridor.
+     *
+     * Each leg is rest-to-rest at the configured waypoints. This is the
+     * point-cloud flight path; it does not build the fixed box corridor.
+     */
+    std::optional<ReferenceTrajectory> plan_map_route(
         const voxel_map::VoxelMap &map);
 
     /// Problem configuration in use.

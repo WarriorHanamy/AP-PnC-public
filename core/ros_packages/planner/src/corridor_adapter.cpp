@@ -16,14 +16,11 @@
 
 #include <algorithm>
 #include <gcopter/sfc_gen.hpp>
+#include <planner_core/ciri.hpp>
 #include <planner_core/corridor_adapter.hpp>
 #include <planner_core/grid_astar.hpp>
 #include <stdexcept>
 #include <utility>
-
-#if defined(AP_PNC_HAS_CIRI)
-#include <ciri/corridor.hpp>
-#endif
 
 namespace planner::core
 {
@@ -107,7 +104,6 @@ namespace planner::core
       CorridorLog      log_;
     };
 
-#if defined(AP_PNC_HAS_CIRI)
     class CiriCorridor final : public CorridorAdapter
     {
      public:
@@ -128,7 +124,7 @@ namespace planner::core
         {
           if (log_)
           {
-            log_("CIRI corridor requires the voxel map adapter in this phase");
+            log_("CIRI corridor requires the voxel map adapter");
           }
           return false;
         }
@@ -142,17 +138,50 @@ namespace planner::core
         }
         std::vector<Eigen::Vector3d> surf;
         map.surface(surf);
-        Eigen::Matrix3Xd obstacles(3, static_cast<Eigen::Index>(surf.size()));
-        for (Eigen::Index column = 0; column < obstacles.cols(); ++column)
+        if (surf.empty())
         {
-          obstacles.col(column) = surf[static_cast<std::size_t>(column)];
+          Eigen::MatrixX4d box(6, 4);
+          box.setZero();
+          box(0, 0) = 1.0;
+          box(0, 3) = -map.corner().x();
+          box(1, 0) = -1.0;
+          box(1, 3) = map.origin().x();
+          box(2, 1) = 1.0;
+          box(2, 3) = -map.corner().y();
+          box(3, 1) = -1.0;
+          box(3, 3) = map.origin().y();
+          box(4, 2) = 1.0;
+          box(4, 3) = -map.corner().z();
+          box(5, 2) = -1.0;
+          box(5, 3) = map.origin().z();
+          hPolys    = {box};
+          return true;
         }
-        hPolys.clear();
-        hPolys.reserve(route.size());
-        for (std::size_t i = 1; i < route.size(); ++i)
+
+        std::vector<Eigen::Vector3d> seeds{route.front()};
+        for (std::size_t index = 1; index < route.size(); ++index)
         {
-          const Eigen::Vector3d      &a = route[i - 1];
-          const Eigen::Vector3d      &b = route[i];
+          const Eigen::Vector3d from = route[index - 1];
+          const Eigen::Vector3d edge = route[index] - from;
+          const double          span = edge.norm();
+          if (!(span > 1e-3))
+          {
+            continue;
+          }
+          const int pieces = std::max(
+              1, static_cast<int>(std::ceil(span / settings_.progress_m)));
+          for (int piece = 1; piece <= pieces; ++piece)
+          {
+            seeds.push_back(from +
+                            edge * (static_cast<double>(piece) / pieces));
+          }
+        }
+
+        hPolys.clear();
+        for (std::size_t index = 1; index < seeds.size(); ++index)
+        {
+          const Eigen::Vector3d      &a = seeds[index - 1];
+          const Eigen::Vector3d      &b = seeds[index];
           Eigen::Matrix<double, 6, 4> bounds =
               Eigen::Matrix<double, 6, 4>::Zero();
           bounds(0, 0)       = 1.0;
@@ -174,12 +203,38 @@ namespace planner::core
               -std::min(std::max(a.z(), b.z()) + range, map.corner().z());
           bounds(5, 3) =
               std::max(std::min(a.z(), b.z()) - range, map.origin().z());
-          Eigen::MatrixX4d polytope;
-          if (!ciri::decompose_segment(bounds, obstacles, a, b,
-                                       settings_.robot_radius_m,
-                                       settings_.ciri_iterations, polytope) ||
-              polytope.cols() != 4 || polytope.rows() < 4)
+          std::vector<Eigen::Vector3d> nearby;
+          nearby.reserve(surf.size());
+          for (const Eigen::Vector3d &point : surf)
           {
+            const Eigen::Vector3d chord = b - a;
+            const double          denom = chord.squaredNorm();
+            const double          time =
+                denom < 1e-12
+                             ? 0.0
+                             : std::clamp((point - a).dot(chord) / denom, 0.0, 1.0);
+            if ((point - (a + time * chord)).norm() <= range)
+            {
+              nearby.push_back(point);
+            }
+          }
+          Eigen::MatrixX4d polytope;
+          if (!ciri_decompose(bounds, nearby, a, b, settings_.robot_radius_m,
+                              settings_.ciri_iterations, polytope))
+          {
+            const Eigen::Vector3d mid = 0.5 * (a + b);
+            Eigen::MatrixX4d      left;
+            Eigen::MatrixX4d      right;
+            if ((b - a).norm() > 0.8 &&
+                ciri_decompose(bounds, nearby, a, mid, settings_.robot_radius_m,
+                               settings_.ciri_iterations, left) &&
+                ciri_decompose(bounds, nearby, mid, b, settings_.robot_radius_m,
+                               settings_.ciri_iterations, right))
+            {
+              hPolys.push_back(std::move(left));
+              hPolys.push_back(std::move(right));
+              continue;
+            }
             if (log_)
             {
               log_("CIRI produced no polytope");
@@ -188,14 +243,22 @@ namespace planner::core
           }
           hPolys.push_back(std::move(polytope));
         }
-        return !hPolys.empty();
+        sfc_gen::shortCut(hPolys);
+        if (hPolys.empty())
+        {
+          if (log_)
+          {
+            log_("CIRI produced no polytopes");
+          }
+          return false;
+        }
+        return true;
       }
 
      private:
       CorridorSettings settings_;
       CorridorLog      log_;
     };
-#endif
 
   }  // namespace
 
@@ -207,30 +270,17 @@ namespace planner::core
     {
       return std::make_unique<FiriCorridor>(settings, std::move(log));
     }
-#if defined(AP_PNC_HAS_CIRI)
     if (backend == "ciri")
     {
       return std::make_unique<CiriCorridor>(settings, std::move(log));
     }
-#endif
-    throw std::invalid_argument(
-        "corridor backend '" + backend +
-        "' is not linked in this build; the default backend is firi");
+    throw std::invalid_argument("corridor backend '" + backend +
+                                "' is unknown; choose firi or ciri");
   }
 
   bool corridor_backend_available(const std::string &backend)
   {
-    if (backend == "firi")
-    {
-      return true;
-    }
-#if defined(AP_PNC_HAS_CIRI)
-    if (backend == "ciri")
-    {
-      return true;
-    }
-#endif
-    return false;
+    return backend == "firi" || backend == "ciri";
   }
 
 }  // namespace planner::core

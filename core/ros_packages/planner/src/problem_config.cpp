@@ -71,10 +71,9 @@ namespace planner::core
     }
     if (!corridor_backend_available(problem.corridor_backend))
     {
-      throw std::invalid_argument(
-          "corridor_backend '" + problem.corridor_backend +
-          "' is not linked in this build; the default is firi. ciri requires "
-          "-DAP_PNC_WITH_CIRI=ON and an external ROS-free CIRI prefix");
+      throw std::invalid_argument("corridor_backend '" +
+                                  problem.corridor_backend +
+                                  "' is unknown; choose firi or ciri");
     }
     if (problem.map_backend == "rog" &&
         !std::filesystem::path(problem.rog_map_config).is_absolute())
@@ -223,6 +222,14 @@ namespace planner::core
                                              problem.map.ciri_robot_radius_m);
     problem.map.ciri_iterations =
         get_or(map_node, "ciri_iterations", problem.map.ciri_iterations);
+    problem.map.point_cloud =
+        get_or<std::string>(map_node, "point_cloud", problem.map.point_cloud);
+    if (!problem.map.point_cloud.empty() &&
+        !std::filesystem::path(problem.map.point_cloud).is_absolute())
+    {
+      throw std::invalid_argument(
+          "map.point_cloud must be an absolute xyz PLY path");
+    }
     if (!std::isfinite(problem.map.ciri_robot_radius_m) ||
         problem.map.ciri_robot_radius_m < 0.0 ||
         problem.map.ciri_iterations < 1)

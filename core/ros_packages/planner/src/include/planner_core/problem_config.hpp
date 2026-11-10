@@ -125,9 +125,12 @@ namespace planner::core
     // the next leg's initial state, which always comes from the predicted
     // terminal state of the previously-pushed segment.
     double drift_threshold_m = 0.5;
-    // Used only when corridor_backend is the optional external CIRI.
+    // In-tree CIRI inflation. Unused by the FIRI backend.
     double ciri_robot_radius_m = 0.2;
     int    ciri_iterations     = 2;
+    // Absolute xyz PLY. When set, the offline plant plans through this cloud
+    // with corridor_backend instead of the fixed box corridor.
+    std::string point_cloud;
   };
 
   /**
@@ -159,9 +162,9 @@ namespace planner::core
     // "map_sfc" (corridor built from the sensed map, continuously replanned).
     std::string corridor_source = "box_sfc";
 
-    // Query and corridor backends. Defaults keep VoxelMap + FIRI. "rog" and
-    // "ciri" require an external prefix at configure time; they are not
-    // vendored. See infra/SUPER_SCENE.md.
+    // Query and corridor backends. The default flight stays voxel + FIRI.
+    // `ciri` is the in-tree convex iterative inflation corridor (not box SFC
+    // and not a copy of SUPER). `rog` still needs an external prefix.
     std::string map_backend      = "voxel";
     std::string corridor_backend = "firi";
     // Absolute external ROG-Map yaml. Required only when map_backend is rog.

@@ -13,16 +13,17 @@
 # is not used here. 8 m/s is the scene recommendation; `dev-sim prepare
 # --v-max` overwrites cost.v_max (the CLI default is 4).
 #
-# corridor_source stays on the existing switch. box_sfc flies the waypoint
-# boxes below. map_sfc replans through the same waypoints from the ground-truth
-# /lidar_sim/map. map_backend / corridor_backend stay on voxel + FIRI unless an
-# external ROG-Map or ROS-free CIRI was linked. See infra/SUPER_SCENE.md.
+# The flight corridor is in-tree CIRI on the pillar point cloud, not the
+# axis-aligned box_sfc. map.point_cloud is an absolute PLY filled in by the
+# flight job (the cloud stays under .artifacts/). v_max 12 m/s is the high
+# end of the speed this ideal multirotor plant is written to track. SUPER's
+# 25 m/s quadrotor limit is not used. See infra/SUPER_SCENE.md.
 problem_formulation:
   piece_n: 8
-  corridor_source: box_sfc
+  corridor_source: map_sfc
   map_backend: voxel
-  corridor_backend: firi
-  waypoint_speed_m_s: 8.0
+  corridor_backend: ciri
+  waypoint_speed_m_s: 12.0
   waypoints:
     - [0.0, -50.0, 1.5]
     - [0.0, 50.0, 1.5]
@@ -49,7 +50,7 @@ problem_formulation:
     curvature_factor: 0.8
     wave_len: 50.0
   cost:
-    v_max: 8.0
+    v_max: 12.0
     omg_x_max: 0.8
     omg_y_max: 2.5
     omg_z_max: 0.8
@@ -84,9 +85,13 @@ problem_formulation:
     mass: 2.0
   map:
     map_topic: /lidar_sim/map
-    voxel_scale_m: 0.2
-    dilate_radius_m: 0.3
+    voxel_scale_m: 0.4
+    dilate_radius_m: 0.4
     bounds_margin_m: 1.0
+    sfc_progress_m: 2.0
+    sfc_range_m: 2.5
+    ciri_robot_radius_m: 0.25
+    ciri_iterations: 2
     replan_margin_s: 1.0
     drift_threshold_m: 0.5
 perception:

@@ -485,4 +485,46 @@ namespace planner::core
     return std::nullopt;
   }
 
+  std::optional<ReferenceTrajectory> Planner::plan_map_route(
+      const voxel_map::VoxelMap &map)
+  {
+    if (config_.problem.waypoints.size() < 2)
+    {
+      log(LogLevel::Error, "Map route needs at least two waypoints");
+      return std::nullopt;
+    }
+    TrajectoryRepresentation<5> joined;
+    Eigen::Matrix3d             state = Eigen::Matrix3d::Zero();
+    state.col(0)                      = config_.problem.waypoints.front();
+    for (std::size_t index = 1; index < config_.problem.waypoints.size();
+         ++index)
+    {
+      Eigen::Matrix3d goal = Eigen::Matrix3d::Zero();
+      goal.col(0)          = config_.problem.waypoints[index];
+      auto leg             = plan_corridor(state, goal, map);
+      if (!leg || leg->empty())
+      {
+        log(LogLevel::Error, "Map corridor leg failed");
+        return std::nullopt;
+      }
+      if (joined.getPieceNum() == 0)
+      {
+        joined = leg->representation();
+      }
+      else
+      {
+        joined.append(leg->representation());
+      }
+      const auto end = leg->sample(leg->duration());
+      state.col(0)   = end.p;
+      state.col(1)   = end.v;
+      state.col(2)   = end.a;
+    }
+    if (joined.getPieceNum() == 0)
+    {
+      return std::nullopt;
+    }
+    return ReferenceTrajectory(std::move(joined));
+  }
+
 }  // namespace planner::core

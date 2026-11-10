@@ -92,7 +92,6 @@ Default configure does not look for these libraries.
 
 ```bash
 cmake -DAP_PNC_WITH_ROG_MAP=ON -DAP_PNC_ROG_MAP_PREFIX=/absolute/rog-map-prefix
-cmake -DAP_PNC_WITH_CIRI=ON -DAP_PNC_CIRI_PREFIX=/absolute/ciri-prefix
 ```
 
 Set `problem_formulation.map_backend: rog` only in that ROG-Map build, and set
@@ -103,26 +102,14 @@ world-frame cloud and the body pose. Their `init()` opens log files under the
 there. The ground-truth voxel map remains the `map_sfc` corridor source in
 this phase.
 
-`corridor_backend: ciri` calls an external ROS-free header, not SUPER's
-`super_core/ciri.h` (that header includes a ROS interface). The prefix must
-provide `include/ciri/corridor.hpp` and a library named `ciri_core` or `ciri`:
+`corridor_backend: ciri` is implemented in this repository
+(`planner_core/ciri.hpp`). It inflates an ellipsoid around each free-space
+segment of the point-cloud route and emits supporting halfspaces
+`ax + by + cz + d <= 0`. That replaces the axis-aligned `box_sfc` for the
+pillar flight. It is not a copy of SUPER's `super_core/ciri.h`.
 
-```cpp
-namespace ciri {
-bool decompose_segment(const Eigen::MatrixX4d &bounds,
-                       const Eigen::Matrix3Xd &obstacles,
-                       const Eigen::Vector3d &segment_start,
-                       const Eigen::Vector3d &segment_end,
-                       double robot_radius_m, int iterations,
-                       Eigen::MatrixX4d &polytope);
-}
-```
-
-`polytope` rows are `ax + by + cz + d <= 0`, the same `MatrixX4d` GCOPTER
-already consumes. A one-file adapter with that signature can live in the
-external prefix. It is not added to this tree.
-
-Python bindings always compile the stub and do not define the optional macros.
+Python bindings compile this CIRI with the rest of the planner core. The
+optional prefix below is only for ROG-Map.
 
 ## Not in this phase
 
