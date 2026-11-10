@@ -19,7 +19,10 @@ export ACADOS_PYTHON_INTERFACE_PATH=/opt/acados_src/interfaces/acados_template
 export LD_LIBRARY_PATH="/opt/acados/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # OCP codegen and compilation both use the image's toolchain, never the host's.
+# Drop the previous export so a renamed model cannot leave stale C symbols
+# in the archive (the solver globs every .c file in this directory).
 gen_dir="$root/.artifacts/c_generated_code"
+rm -rf "$gen_dir"
 mkdir -p "$gen_dir"
 ( cd "$gen_dir" && PYTHONPATH="$root" python3 "$root/tooling/nmpc_gen/create_ocp.py" )
 

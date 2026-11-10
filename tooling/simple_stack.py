@@ -254,7 +254,7 @@ def _write_metadata(job: Path) -> None:
         (
             artifact_path(
                 f".artifacts/nmpc_build/{solver_arch()}/c_generated_code/"
-                "acados_ocp_tailsitter_flu.json"
+                "acados_ocp_rate_thrust_flu.json"
             )
         ).read_text()
     )

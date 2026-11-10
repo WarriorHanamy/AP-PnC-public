@@ -100,11 +100,11 @@ def ocp_nls() -> AcadosOcp:
     import casadi as cs
     from acados_template import AcadosOcp
 
-    from tooling.nmpc_gen.model import create_tailsitter_model, rotation_matrix_from_quaternion
+    from tooling.nmpc_gen.model import create_rate_thrust_model, rotation_matrix_from_quaternion
 
     settings = load_nmpc_settings()
     ocp = AcadosOcp()
-    model = create_tailsitter_model()
+    model = create_rate_thrust_model()
     ocp.model = model
     rotation_world_from_body = rotation_matrix_from_quaternion(model.x[9:13])
     tracking_output = cs.vertcat(model.x[:3], model.x[3:6], rotation_world_from_body[:, 1])
