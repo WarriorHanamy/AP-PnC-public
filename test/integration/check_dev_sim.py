@@ -32,7 +32,7 @@ def main():
     lidar_path = args.config.with_name("lidar_sim.yaml")
     config = yaml.safe_load(args.config.read_text())["simple_sim"]
     lidar = yaml.safe_load(lidar_path.read_text())["lidar_sim"]
-    assert config["aero"]["model"] == "lyu" and config.get("actuator"), "requires practical+lyu"
+    assert "aero" not in config and config.get("actuator"), "requires the practical quadrotor"
     log = (args.output / "launch.log").open("w")
     child = subprocess.Popen(["ros2", "launch", "bringup", "dev_sim.launch.py",
                               f"config:={args.config}", f"lidar_config:={lidar_path}", "rviz:=false"],
@@ -107,7 +107,7 @@ def main():
         before = stamp
         call("reset")
         wait(lambda: clouds[-1].header.stamp.sec == 0 and clouds[-1].header.stamp.nanosec == 0)
-        report = {"status": "passed", "profile": "practical", "aero": "lyu", "controller": config["controller"],
+        report = {"status": "passed", "profile": "practical", "vehicle": "quadrotor", "controller": config["controller"],
                   "map_points": maps[-1].width, "observed_scans": len(clouds), "checked_scan_points": len(points),
                   "checked_time_ns": before, "surface_error_p99_m": float(np.percentile(error, 99)),
                   "checks": ["map_latched", "committed_odometry", "scan_fields_and_frame", "pause_no_new_scan",

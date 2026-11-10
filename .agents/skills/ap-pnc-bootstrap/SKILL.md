@@ -22,7 +22,7 @@ export AP_PNC_DIR=/absolute/path/to/AP-PnC
 uv sync --project "$AP_PNC_DIR"
 uv run --project "$AP_PNC_DIR" ap-pnc gen-nmpc-lib
 uv run --project "$AP_PNC_DIR" ap-pnc build simple-sim
-uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --aero lyu --vmax 8
+uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --vmax 8
 ```
 
 `uv` orchestrates the Docker jobs. The benchmark runs C++ simulation, Rust export

@@ -122,8 +122,9 @@ namespace planner::core
         get_or(minco_node, "rel_cost_tol", problem.minco.rel_cost_tol);
 
     const YAML::Node flatness_node = problem_node["flatness"];
-    problem.flatness.phi =
-        get_or<std::vector<double>>(flatness_node, "phi", problem.flatness.phi);
+    if (flatness_node["phi"])
+      throw std::invalid_argument(
+          "quadrotor flatness has no aerodynamic phi map");
     problem.flatness.mass =
         get_or(flatness_node, "mass", problem.flatness.mass);
     problem.flatness.gravity =
@@ -170,10 +171,8 @@ namespace planner::core
     cost_config.tangential_acc_weight = problem.cost.tangential_acc_weight;
     cost_config.time_weight           = problem.cost.time_weight;
     cost_config.omg_consistent_weight = problem.cost.omg_consistent_weight;
-    // FLU flatness parameters come from the same planner document.
+    // Quadrotor FLU flatness: gravity only. There is no wing-force slope.
     cost_config.flatness_gravity = problem.flatness.gravity;
-    if (problem.flatness.phi.size() >= 8)
-      cost_config.flatness_aero_slope = problem.flatness.phi[7];
   }
 
 }  // namespace planner::core

@@ -6,7 +6,6 @@ COPY core/ros_packages/planner/ /workspace/core/ros_packages/planner/
 COPY core/ros_packages/nmpc/src/controller/ /workspace/core/ros_packages/nmpc/src/controller/
 COPY core/ros_packages/nmpc/src/include/ /workspace/core/ros_packages/nmpc/src/include/
 COPY core/bringup/ /workspace/core/bringup/
-COPY infra/sim_infra/aerodynamics/ /workspace/infra/sim_infra/aerodynamics/
 COPY infra/sim_infra/simple_sim/ /workspace/infra/sim_infra/simple_sim/
 COPY .artifacts/nmpc_solver/ /workspace/.artifacts/nmpc_solver/
 RUN select-nmpc-bundle

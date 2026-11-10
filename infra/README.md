@@ -24,8 +24,8 @@ record the demo's evidence and licensing boundaries.
 
 ## Layout
 
-- [sim_infra](sim_infra/) — simulator implementations, plant models and Docker stacks.
-  The [aerodynamics guide](AERODYNAMICS.md) covers aerodynamic models.
+- [sim_infra](sim_infra/) — simulator implementations, the quadrotor plant and Docker stacks.
+  [Plant scope](AERODYNAMICS.md) records that wing-force models are not included.
 - [sim_k3s](sim_k3s/) — Kubernetes manifests and dispatcher. Its
   [deployment notes](K3S.md) include legacy CLI examples; the current
   `ap-pnc` CLI does not register a `k3s` command.

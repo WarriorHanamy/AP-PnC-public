@@ -26,7 +26,7 @@ def prepare(
         "continuously replanned from /lidar_sim/map)"),
     output: Annotated[Path | None, typer.Option(help="Fresh directory under AP_PNC_DIR/.artifacts")] = None,
 ):
-    """Stage frozen practical + lyu configs; do not start simulation."""
+    """Stage a frozen practical quadrotor config; do not start simulation."""
     typer.echo(dev_sim.prepare(controller=controller, v_max=v_max, scene=scene,
                               corridor_source=corridor_source, output=output))
 

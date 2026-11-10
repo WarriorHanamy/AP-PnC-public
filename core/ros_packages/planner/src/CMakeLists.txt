@@ -3,7 +3,7 @@
 
 add_subdirectory(gcopter)
 add_subdirectory(basic_trajectories)
-add_subdirectory(tailsitter_df)
+add_subdirectory(quadrotor_df)
 
 add_library(planner_core STATIC
   problem_config.cpp
@@ -23,5 +23,5 @@ target_link_libraries(planner_core
     sin
     line
     verloop
-    tailsitter_df
+    quadrotor_df
 )

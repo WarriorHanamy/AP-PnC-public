@@ -37,10 +37,11 @@ namespace simple_sim
 
   struct AeroObservation
   {
-    // Aircraft-relative-to-air velocity, body FLU [m/s].
+    // Unused on the quadrotor plant. Kept so a logged wrench can record that
+    // no external flow observation was produced.
     Eigen::Vector3d velocity_body = Eigen::Vector3d::Zero();
     double          alpha_rad = 0.0, beta_rad = 0.0;
-    bool valid = false;  // actual model-returned angles; diagnostic only
+    bool            valid = false;
   };
 
   struct Wrench
@@ -60,11 +61,10 @@ namespace simple_sim
   {
     Eigen::Vector3d specific_force =
         Eigen::Vector3d::Zero();  // ideal IMU, no gravity
-    // True aerodynamic specific force (body FLU, m/s^2). This is the
-    // simulator's own model evaluation, so a controller using it gets a perfect
-    // aero feedforward; a real implementation would use a model or an estimate.
-    Eigen::Vector3d aerodynamic_specific_force = Eigen::Vector3d::Zero();
-    Wrench          aerodynamic;
+    // Optional external specific force (body FLU, m/s^2). The quadrotor plant
+    // leaves this at zero; rotor loads are `applied`.
+    Eigen::Vector3d external_specific_force = Eigen::Vector3d::Zero();
+    Wrench          external;
     Wrench          applied;
   };
 

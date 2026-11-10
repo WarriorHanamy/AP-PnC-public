@@ -17,8 +17,8 @@
 #include <algorithm>
 #include <cmath>
 #include <planner_core/trajectory.hpp>
+#include <quadrotor_df/flu_reference.hpp>
 #include <stdexcept>
-#include <tailsitter_df/flu_reference.hpp>
 
 namespace planner::core
 {
@@ -42,7 +42,7 @@ namespace planner::core
     rp.a = traj_.getAcc(t);
 
     const auto flatness =
-        tailsitter_df::flu_reference(rp.v, rp.a, traj_.getJer(t));
+        quadrotor_df::flu_reference(rp.v, rp.a, traj_.getJer(t));
     rp.rotation = flatness.rotation;
     rp.yb = rp.rotation.col(1);  // world representation of +Y_FLU, no sign fix
     rp.omega             = flatness.omega;

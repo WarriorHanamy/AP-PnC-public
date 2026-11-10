@@ -20,7 +20,7 @@ include_dirs = [
     str(src / "include"),
     str(src / "gcopter" / "include"),
     str(src / "basic_trajectories" / "include"),
-    str(src / "tailsitter_df" / "include"),
+    str(src / "quadrotor_df" / "include"),
 ]
 sources = [
     str(pkg / "python" / "planner_bindings.cpp"),
@@ -29,7 +29,7 @@ sources = [
     str(src / "trajectory.cpp"),
     str(src / "grid_astar.cpp"),
     *[str(p) for p in sorted((src / "basic_trajectories" / "src").glob("*.cpp"))],
-    *[str(p) for p in sorted((src / "tailsitter_df" / "src").glob("*.cpp"))],
+    *[str(p) for p in sorted((src / "quadrotor_df" / "src").glob("*.cpp"))],
 ]
 
 ext_modules = [

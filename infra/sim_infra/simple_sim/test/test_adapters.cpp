@@ -1,10 +1,9 @@
 #include <iostream>
 #include <limits>
+#include <quadrotor_df/flu_flatness.hpp>
+#include <quadrotor_df/flu_reference.hpp>
 #include <stdexcept>
-#include <tailsitter_df/flu_flatness.hpp>
-#include <tailsitter_df/flu_reference.hpp>
 
-#include "simple_sim/adapters/aero_model.hpp"
 #include "simple_sim/adapters/controllers.hpp"
 #include "simple_sim/rate_loop.hpp"
 #include "simple_sim/runner.hpp"
@@ -16,32 +15,16 @@ namespace
     if (!c)
       throw std::runtime_error(message);
   }
-  class FakeAero : public aerodynamics::AerodynamicsInterface
-  {
-   public:
-    Eigen::Vector3d input   = Eigen::Vector3d::Zero();
-    bool            success = true;
-    bool getAeroWrench(const Eigen::Vector3d &v, Eigen::Vector3d &f,
-                       Eigen::Vector3d &m, double &alpha, double &beta) override
-    {
-      input = v;
-      f     = {1, 2, 3};
-      m     = {4, 5, 6};
-      alpha = 0.2;
-      beta  = 0.1;
-      return success;
-    }
-  };
   void flu_flatness_jacobian()
   {
     // The analytic Jacobian must agree with central differences of the same
     // value map, otherwise the MINCO cost gradient is wrong.
-    tailsitter_df::FluFlatnessParams params;
-    const auto                       value = [&params](const Eigen::Vector3d &v,
-                                                       const Eigen::Vector3d &a,
-                                                       const Eigen::Vector3d &j)
+    quadrotor_df::FluFlatnessParams params;
+    const auto                      value = [&params](const Eigen::Vector3d &v,
+                                 const Eigen::Vector3d &a,
+                                 const Eigen::Vector3d &j)
     {
-      const auto r = tailsitter_df::flu_flatness(v, a, j, params);
+      const auto r = quadrotor_df::flu_flatness(v, a, j, params);
       Eigen::Matrix<double, 4, 1> out;
       out << r.specific_thrust, r.omega;
       return out;
@@ -54,7 +37,7 @@ namespace
     double                worst = 0.0;
     for (const auto &v : velocities)
     {
-      const auto flatness = tailsitter_df::flu_flatness(v, acc, jerk, params);
+      const auto flatness = quadrotor_df::flu_flatness(v, acc, jerk, params);
       check(flatness.nominal, "expected the nominal branch");
       const std::array<Eigen::Vector3d, 3> inputs{v, acc, jerk};
       const double                         step = 1e-6;
@@ -79,110 +62,41 @@ namespace
                 "FLU flatness Jacobian disagrees with finite differences");
         }
     }
-    // Body-X residual of the aerodynamic force must be the only component.
+    // Quadrotor flatness aligns thrust with specific force, so the wing
+    // residual is zero.
     const Eigen::Vector3d v(10.0, 0.0, 0.0);
     const Eigen::Vector3d circle_acc(0.0, -5.0, 0.0);
-    const auto r = tailsitter_df::flu_flatness(v, circle_acc,
-                                               Eigen::Vector3d::Zero(), params);
+    const auto            r = quadrotor_df::flu_flatness(v, circle_acc,
+                                                         Eigen::Vector3d::Zero(), params);
     const Eigen::Vector3d eta =
         circle_acc + params.gravity * Eigen::Vector3d::UnitZ();
-    const Eigen::Vector3d aero_body =
+    const Eigen::Vector3d residual =
         r.rotation.transpose() * (eta - r.specific_thrust * r.rotation.col(2));
-    check(aero_body(0) < 0.0 && std::abs(aero_body(1)) < 1e-9 &&
-              std::abs(aero_body(2)) < 1e-9,
-          "10 m/s circle must give a negative body-X aerodynamic force");
-    std::cout << "FLU flatness: worst Jacobian/FD error = " << worst
-              << ", circle body-X aero = " << aero_body(0) << "\n";
+    check(residual.norm() < 1e-9,
+          "quadrotor flatness must leave no wing-force residual");
+    std::cout << "FLU flatness: worst Jacobian/FD error = " << worst << "\n";
   }
-  void aero_frames()
+  void se3_level_flight()
   {
-    auto                   model = std::make_shared<FakeAero>();
-    simple_sim::AeroConfig cfg;
-    cfg.wind_world          = {1, 2, 3};
-    auto              force = simple_sim::tailsitter_aero(model, cfg);
-    simple_sim::State s;
-    s.velocity   = {11, 22, 33};
-    const auto w = force(s);
-    check(model->input.isApprox(Eigen::Vector3d(10, 20, 30)),
-          "air-relative velocity must remain body FLU");
-    check(w.observation.valid && w.observation.alpha_rad == 0.2 &&
-              w.observation.beta_rad == 0.1 &&
-              w.observation.velocity_body.isApprox(model->input),
-          "actual model angles/air velocity not preserved");
-    check(w.force.isApprox(Eigen::Vector3d(1, 2, 3)),
-          "model FLU force altered");
-    check(w.moment.isApprox(Eigen::Vector3d(4, 5, 6)),
-          "model FLU moment altered");
-    s.attitude = Eigen::Quaterniond(
-        Eigen::AngleAxisd(0.7, Eigen::Vector3d(1, 2, 3).normalized()));
-    const auto expected_body =
-        (s.attitude.conjugate() * (s.velocity - cfg.wind_world)).eval();
-    force(s);
-    check(model->input.isApprox(expected_body),
-          "rotated body/world wind frame");
-    s.attitude.coeffs() *= -1;
-    force(s);
-    check(model->input.isApprox(expected_body),
-          "quaternion double cover changed physical frame");
-    model->success = false;
-    bool caught    = false;
-    try
-    {
-      force(s);
-    }
-    catch (const std::exception &)
-    {
-      caught = true;
-    }
-    check(caught, "failed aero model silently accepted");
-  }
-  void se3_flu_force_balance()
-  {
-    class AxialDependentAero : public aerodynamics::AerodynamicsInterface
-    {
-     public:
-      bool getAeroWrench(const Eigen::Vector3d &v, Eigen::Vector3d &f,
-                         Eigen::Vector3d &m, double &alpha,
-                         double &beta) override
-      {
-        std::tie(alpha, beta) = aerodynamics::air_angles(v);
-        f                     = {-2.0 - 0.1 * v.z(), 0, 0};
-        m.setZero();
-        return true;
-      }
-    };
-    const double          yaw = 0.7, gravity = 9.81, mass = 2.0, airspeed = 5.0;
-    const Eigen::Vector3d direction(std::cos(yaw), std::sin(yaw), 0);
+    const double                gravity = 9.81;
     Eigen::Matrix<double, 3, 6> polynomial =
         Eigen::Matrix<double, 3, 6>::Zero();
-    polynomial.col(4) = 6.0 * direction;  // Airspeed 5 plus a 1 m/s tailwind.
-    polynomial(2, 5)  = 2.0;
+    polynomial(0, 4) = 4.0;
+    polynomial(2, 5) = 2.0;
     TrajectoryRepresentation<5> representation;
     representation.emplace_back(2.0, polynomial);
     auto reference = std::make_shared<const planner::core::ReferenceTrajectory>(
         std::move(representation));
-    auto                 model = std::make_shared<AxialDependentAero>();
-    simple_sim::Se3Gains gains;
-    gains.aero_flatness_feedforward = true;
-    simple_sim::AeroConfig aero;
-    aero.wind_world = direction;
-    simple_sim::Se3Controller controller(reference, gravity, gains, model, mass,
-                                         true, aero);
-    simple_sim::State         state;
-    state.position = reference->sample(0).p;
-    state.velocity = 6.0 * direction;
-    // -m*g*sin(theta) = -2 - .1*V*sin(theta), so the native FLU
-    // force balance requires this positive body-Y rotation into forward tilt.
-    const double tilt = std::asin(2.0 / (mass * gravity - .1 * airspeed));
-    state.attitude    = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
-                        Eigen::AngleAxisd(tilt, Eigen::Vector3d::UnitY());
+    simple_sim::Se3Controller controller(reference, gravity, {});
+    simple_sim::State         state =
+        simple_sim::initial_state(reference->sample(0.0), gravity);
     controller.reset(state);
     const auto command =
         controller.compute({0, 0, 20000000}, state, {}).command;
     check(command.rates.norm() < 1e-8,
-          "SE3 model angle disagrees with its candidate FLU attitude");
-    check(std::abs(command.specific_force - gravity * std::cos(tilt)) < 1e-9,
-          "SE3 thrust-axis projection disagrees with FLU force balance");
+          "matched quadrotor attitude must not demand a rate");
+    check(std::abs(command.specific_force - gravity) < 1e-8,
+          "level flight thrust must balance weight");
   }
   void tracking()
   {
@@ -244,27 +158,25 @@ int main()
 {
   try
   {
-    const auto hover = tailsitter_df::flu_reference(Eigen::Vector3d::Zero(),
-                                                    Eigen::Vector3d::Zero(),
-                                                    Eigen::Vector3d::Zero());
+    const auto hover = quadrotor_df::flu_reference(Eigen::Vector3d::Zero(),
+                                                   Eigen::Vector3d::Zero(),
+                                                   Eigen::Vector3d::Zero());
     check(hover.rotation.isApprox(Eigen::Matrix3d::Identity()) &&
               std::abs(hover.specific_thrust - 9.81) < 1e-12,
           "+Z FLU hover reference");
     for (double speed : {0.0, 0.499999, 0.500001, 1.0, 6.0})
     {
       const auto r =
-          tailsitter_df::flu_reference({speed, 0, 0}, {0, 0, 0}, {0, 0, 0});
+          quadrotor_df::flu_reference({speed, 0, 0}, {0, 0, 0}, {0, 0, 0});
       check(r.rotation.col(1).isApprox(Eigen::Vector3d::UnitY()),
             "yb flipped across speed guard");
       check(std::abs(r.rotation.determinant() - 1) < 1e-12,
             "reference reflection");
     }
-    aero_frames();
-    std::cout << "PASS aerodynamic frame mapping/failure\n";
-    std::cout << "PASS single wing/FLU frame mapping\n";
     flu_flatness_jacobian();
-    std::cout << "PASS FLU flatness Jacobian + circle aerodynamics\n";
-    se3_flu_force_balance();
+    std::cout << "PASS quadrotor FLU flatness Jacobian\n";
+    se3_level_flight();
+    std::cout << "PASS quadrotor SE3 level flight\n";
     tracking();
     std::cout << "PASS planner reference + SE3 line tracking\n";
     return 0;

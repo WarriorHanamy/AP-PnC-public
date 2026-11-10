@@ -2,7 +2,6 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include <aerodynamics/aero_models.hpp>
 #include <cmath>
 #include <cstdlib>
 #include <stdexcept>
@@ -148,35 +147,14 @@ namespace simple_sim
       motor.validate();
     }
 
-    config.se3.aero_flatness_feedforward =
-        sim["se3"]["aero_flatness_feedforward"].as<bool>(false);
-    config.se3.position    = read_vector3(sim["se3"]["position_gain"]);
-    config.se3.velocity    = read_vector3(sim["se3"]["velocity_gain"]);
-    config.se3.attitude    = read_vector3(sim["se3"]["attitude_gain"]);
-    config.se3.max_rate    = read_vector3(sim["se3"]["max_rate"]);
-    config.aero_model      = sim["aero"]["model"].as<std::string>();
-    config.aero.wind_world = read_vector3(sim["aero"]["wind_world"]);
-    config.aero.scale      = sim["aero"]["scale"].as<double>();
-    config.aero.lateral_moment_only =
-        sim["aero"]["lateral_moment_only"].as<bool>(false);
-    const auto injection =
-        sim["aero"]["inject_thrust_axis"].as<std::string>("auto");
-    if (injection == "auto")
-      config.aero.inject_thrust_axis = -1;
-    else if (injection == "true")
-      config.aero.inject_thrust_axis = 1;
-    else if (injection == "false")
-      config.aero.inject_thrust_axis = 0;
-    else
+    if (sim["aero"] || sim["se3"]["aero_flatness_feedforward"])
       throw std::invalid_argument(
-          "aero.inject_thrust_axis must be auto, true or false");
-    // Canonical model names and their project validation status come from the
-    // single table in aerodynamics/aero_models.hpp.
-    const auto *entry = aerodynamics::find_aero_model(config.aero_model);
-    if (entry == nullptr || !std::isfinite(config.aero.scale) ||
-        config.aero.scale < 0.0)
-      throw std::invalid_argument("invalid aero model name or scale");
-    config.aero_validation = aerodynamics::validation_label(entry->status);
+          "quadrotor-only: aerodynamic models and feedforward are not "
+          "supported");
+    config.se3.position = read_vector3(sim["se3"]["position_gain"]);
+    config.se3.velocity = read_vector3(sim["se3"]["velocity_gain"]);
+    config.se3.attitude = read_vector3(sim["se3"]["attitude_gain"]);
+    config.se3.max_rate = read_vector3(sim["se3"]["max_rate"]);
     if (sim["throttle"])
     {
       const YAML::Node &t = sim["throttle"];

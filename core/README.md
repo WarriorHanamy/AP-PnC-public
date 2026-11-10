@@ -125,16 +125,14 @@ The Hamilton quaternion `q_WB=[w,x,y,z]` rotates body vectors into world.
 - `Control`: FLU body-rate setpoints and +Z specific force [m/s²].
 - `ReferencePoint`: ENU position/velocity and desired body-Y **expressed in ENU**.
 - `TrackingInfo`: position/velocity and body-Y directions expressed in ENU;
-  `alpha=atan2(v_B.x,v_B.z)` and `beta=atan2(v_B.y,hypot(v_B.x,v_B.z))` [rad].
-  `cx` is the IMU-derived, mass-normalized **body-X** coefficient [1/m].
-  The controller assumes zero wind; aerodynamic plant models use air-relative
-  velocity with the same body-FLU angle definition.
+  `alpha=atan2(v_B.x,v_B.z)` and `beta=atan2(v_B.y,hypot(v_B.x,v_B.z))` [rad]
+  are kinematic body-velocity angles. The controller assumes zero wind. There
+  is no wing-force coefficient.
 
 Rebuild `interface` and all publishers/subscribers together when changing a
 message schema.
 
-The ROS node also reads the configured excitation gate and regressor lag, so
-its `TrackingConfig` matches the simulator's settings.
+The ROS node and the simulator share the same quadrotor `TrackingConfig`.
 
 ### Linux verification
 

@@ -13,8 +13,6 @@ from pathlib import Path
 import rclpy
 import yaml
 from interface.msg import Control, ReferenceHorizon, ReferencePoint, State, TrackingInfo
-from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Imu
 from std_msgs.msg import Bool
 
 from tooling.env import artifact_path, get_git_root
@@ -57,13 +55,10 @@ def run(install: Path):
         node.create_subscription(TrackingInfo, "/nmpc/tracking_info", tracking.append, 1)
         node.create_subscription(ReferenceHorizon, "/nmpc/reference", references.append, 1)
         state_pub = node.create_publisher(State, "/px4ctrl/state", 1)
-        imu_pub = node.create_publisher(Imu, "/mavros/imu/data_raw", qos_profile_sensor_data)
         ref_pub = node.create_publisher(ReferenceHorizon, "/nmpc/reference", 1)
         mode_pub = node.create_publisher(Bool, "/planner/mode", 1)
         state = State()
         state.state[9] = 1.0
-        imu = Imu()
-        imu.linear_acceleration.x = 0.02
         horizon = ReferenceHorizon()
         horizon.traj_resolution = config["traj_res_s"]
         horizon.tracking_valid = True
@@ -79,7 +74,6 @@ def run(install: Path):
                     if process.poll() is not None:
                         raise RuntimeError("ROS adapter exited; inspect saved logs")
                 state_pub.publish(state)
-                imu_pub.publish(imu)
                 if publish_reference:
                     ref_pub.publish(horizon)
                 rclpy.spin_once(node, timeout_sec=0.02)
@@ -89,21 +83,15 @@ def run(install: Path):
 
         spin_until(
             lambda: state_pub.get_subscription_count() > 0
-            and imu_pub.get_subscription_count() > 0
             and ref_pub.get_subscription_count() > 0,
             10.0,
         )
-        # Allow both sensor streams to arrive before asking the real solver to run.
         deadline = time.monotonic() + 0.2
         while time.monotonic() < deadline:
             state_pub.publish(state)
-            imu_pub.publish(imu)
             rclpy.spin_once(node, timeout_sec=0.02)
         spin_until(lambda: bool(tracking) and bool(controls), 10.0, publish_reference=True)
         info = tracking[-1]
-        expected_cx = imu.linear_acceleration.x / 0.1  # zero speed, regularized denominator
-        if not math.isclose(info.cx, expected_cx, rel_tol=1e-6, abs_tol=1e-6):
-            raise AssertionError(f"body-X coefficient mismatch: {info.cx} != {expected_cx}")
         if set(State.get_fields_and_field_types()) != {"timestamp", "state"}:
             raise AssertionError("State schema does not match the quadrotor state contract")
         if set(TrackingInfo.get_fields_and_field_types()) != {
@@ -118,9 +106,8 @@ def run(install: Path):
             "actual_yb",
             "alpha",
             "beta",
-            "cx",
         }:
-            raise AssertionError("TrackingInfo schema does not match the FLU feedback contract")
+            raise AssertionError("TrackingInfo schema does not match the quadrotor feedback contract")
         command = controls[-1]
         if not all(
             math.isfinite(value) for value in (*command.rates_sp, command.specific_force_sp)
@@ -129,7 +116,7 @@ def run(install: Path):
         bounds = config["command_bounds"]
         if not bounds["lower"][0] <= command.specific_force_sp <= bounds["upper"][0]:
             raise AssertionError("specific thrust outside configured bounds")
-        print("PASS real NMPC control delivery and correctly labeled body-X feedback")
+        print("PASS real NMPC control delivery")
 
         # No planner runs yet: a wrong-grid horizon must not emit a control.
         deadline = time.monotonic() + 0.2
@@ -141,14 +128,11 @@ def run(install: Path):
         if controls:
             raise AssertionError("invalid reference grid emitted a command")
         horizon.traj_resolution = config["traj_res_s"]
-        imu.linear_acceleration.x = 0.08
         deadline = time.monotonic() + 0.2
         spin_until(lambda: time.monotonic() >= deadline, 1.0)
         tracking.clear()
         spin_until(lambda: bool(tracking) and bool(controls), 10.0, publish_reference=True)
-        if not math.isclose(tracking[-1].cx, 0.4, rel_tol=1e-6, abs_tol=1e-6):
-            raise AssertionError("coefficient feedback saturation/recovery failed")
-        print("PASS wrong-grid rejection, recovery and saturated body-X feedback")
+        print("PASS wrong-grid rejection and recovery")
 
         # Nonidentity q_WB and nonzero velocity expose axis swaps, reversed
         # quaternion direction and a flipped sideslip sign.
@@ -183,9 +167,6 @@ def run(install: Path):
             for a, b in zip(info.actual_yb, (-math.sin(yaw), math.cos(yaw), 0.0), strict=True)
         ):
             raise AssertionError("body-Y direction is not expressed in world ENU")
-        expected_cx = imu.linear_acceleration.x / (sum(v * v for v in velocity) + 0.1)
-        if not math.isclose(info.cx, expected_cx, abs_tol=1e-6):
-            raise AssertionError("moving-state body-X coefficient mismatch")
         print("PASS nonidentity q_WB, FLU angles and world-ENU body-Y direction")
         state.state[3:6] = (0.0, 0.0, 0.0)
         state.state[9:13] = (1.0, 0.0, 0.0, 0.0)

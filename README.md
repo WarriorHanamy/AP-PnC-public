@@ -1,6 +1,9 @@
 # AP-PnC
 
-Aerodynamic prior-free coordinated trajectory generation and tracking control for a tail-sitter UAV.
+Quadrotor trajectory generation and tracking. Planning and NMPC for a
+multirotor: collective thrust along body +Z, no wing-force model. A later phase
+may compare reinforcement learning with radar-point-cloud-to-depth YOPO on
+post-CIRI scenes; that pipeline is not in this tree.
 
 ## Quick start
 
@@ -17,14 +20,14 @@ git clone https://github.com/SYSU-HILAB/AP-PnC.git "$AP_PNC_DIR"
 uv sync --project "$AP_PNC_DIR"
 uv run --project "$AP_PNC_DIR" ap-pnc gen-nmpc-lib
 uv run --project "$AP_PNC_DIR" ap-pnc build simple-sim
-uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --aero lyu --vmax 8
+uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --vmax 8
 ```
 
 `uv` orchestrates Docker builds and simulation jobs. The benchmark compares
-SE3 control with and without aerodynamic feedforward against NMPC, saves the
-results, and prints a comparison table.
+geometric SE3 control with NMPC on the quadrotor plant, saves the results, and
+prints a comparison table.
 
-Use `--aero none,lyu,phi --vmax 8,10,12` for a larger sweep.
+Use `--vmax 8,10,12` for more than one speed cap.
 The `ideal` profile is ready to use; `practical` requires locally extracted
 actuator parameters.
 
@@ -78,6 +81,9 @@ After changing solver settings, regenerate the NMPC bundle and rebuild the stack
 For command options, run `uv run --project "$AP_PNC_DIR" ap-pnc --help`.
 
 ## Paper
+
+The planner and NMPC descend from this tail-sitter paper. This checkout is the
+quadrotor line of that work: wing models and transition flight are not included.
 
 **Aerodynamic Prior-Free Coordinated Trajectory Generation and Tracking Control
 for a Tail-Sitter UAV**

@@ -96,7 +96,7 @@ def test_frozen_closed_loop_and_profile(project):
     assert (job / "scene/occupancy.ply").read_bytes() == b"test fixture, not a map"
     sim = yaml.safe_load((job / "config/simple_sim.yaml").read_text())["simple_sim"]
     assert sim["plant"]["mass"] == 2.12 and sim["controller"] == "nmpc"
-    assert sim["aero"]["model"] == "lyu"
+    assert "aero" not in sim
     assert sim["actuator"]["body_frame"] == "FLU"
     assert sim["actuator"]["kp"] == pytest.approx([0.01, 0.02, 0.09])
     assert sim["actuator"]["kd"] == pytest.approx([0.001, 0.002, 0.009])

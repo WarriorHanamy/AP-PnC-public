@@ -11,7 +11,7 @@ from tooling.commands import (
     test,
 )
 
-app = typer.Typer(no_args_is_help=True, help="AP-PnC tailsitter project CLI.")
+app = typer.Typer(no_args_is_help=True, help="AP-PnC quadrotor planning and tracking CLI.")
 
 app.add_typer(
     gen_nmpc_lib.app, name="gen-nmpc-lib", help="Generate acados NMPC code and bundle lib"

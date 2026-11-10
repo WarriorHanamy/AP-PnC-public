@@ -37,7 +37,7 @@ uv run --project "$AP_PNC_DIR" ap-pnc dev-sim run "$JOB"
 ```
 
 `build` uses the host CPU's Linux Docker target; no `--arch` option exists here.
-`prepare` stages frozen practical + Lyu configs and prints an absolute job path.
+`prepare` stages a frozen practical quadrotor config and prints an absolute job path.
 Defaults are NMPC, pillars, `box_sfc` and `--v-max 4`; `--controller se3` is an
 explicit alternative. Jobs live under
 `$AP_PNC_DIR/.artifacts/dev-sim/linux-<docker_arch>/`.

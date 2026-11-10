@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ap-pnc"
 version = "0.1.0"
-description = "AP-PnC tailsitter project CLI"
+description = "AP-PnC quadrotor planning and tracking"
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
@@ -15,8 +15,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.53.0",
     "websockets>=16.1.1",
-    # Runtime, not dev: the aerodynamics data layer and the local HTTP helpers use
-    # these, and a user running the stack should get them from a plain `uv sync`.
+    # Runtime, not dev: figure caches and the local HTTP helpers use these.
     "pandas",
     "pybind11",
     "httpx>=0.28.1",
@@ -52,8 +51,8 @@ extra = [
 package = true
 
 [tool.setuptools.packages.find]
-where = [".", "infra/sim_infra/aerodynamics/python"]
-include = ["tooling*", "aerodynamics*"]
+where = ["."]
+include = ["tooling*"]
 
 [tool.ruff]
 line-length = 100

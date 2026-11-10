@@ -2,7 +2,7 @@
 
 This is an interactive **development** entry point, separate from offline
 benchmark sweeps. The existing lockstep C++ plant/controller runs under ROS2
-with **Lyu aerodynamics + practical four-motor actuation**. An independent ROS2
+with **the quadrotor plant and practical four-motor actuation**. An independent ROS2
 node generates a pillar/ground point-cloud map and pose-dependent LiDAR first
 returns. It requires no PX4, MAVROS, Gazebo, external dataset or real aircraft.
 
@@ -33,8 +33,8 @@ docker exec "$NAME" /entrypoint.sh ros2 service call /simple_sim/reset std_srvs/
 
 Ctrl-C stops only this job's container. Reset reuses frozen trajectory/config,
 returns to paused time zero and creates a new scientific recording. Restart to
-apply config changes. `prepare --controller se3` selects the aerodynamic SE3
-controller instead of the default NMPC.
+apply config changes. `prepare --controller se3` selects geometric SE3
+instead of the default NMPC.
 
 The development default is a 10-piece, radius-8m reference at altitude 3m with
 planner `v_max=4m/s` and a 2s terminal hold. These are run-local overrides;
@@ -54,7 +54,7 @@ outputs live under `.artifacts/dev-sim/linux-<arch>/<job>/`:
 | `/lidar_sim/points` | Sensor-frame first-return `PointCloud2`; frame `lidar` |
 | `/simple_sim/odom` | Committed world pose and body-frame twist |
 | `/simple_sim/imu` | Body FLU angular velocity and specific force |
-| `/simple_sim/aero_wrench` | Actual plant aerodynamic wrench |
+| `/simple_sim/external_wrench` | External body wrench (zero on the quadrotor plant) |
 | `/simple_sim/reference`, `/simple_sim/path` | Planned and committed plant paths |
 | `/clock` | Committed simulation time |
 
@@ -136,8 +136,9 @@ read-only into the container; it fails explicitly if the file above is missing
 rather than silently falling back to pillars. Neither the raw download nor the
 converted output is committed to the repository — both stay under `.artifacts/`.
 
-This was run once end-to-end with practical actuation + Lyu aerodynamics +
-NMPC at `v_max=10`: the full closed radius-8m/altitude-3m circuit completed
+One earlier run, on the previous tail-sitter configuration rather than this
+quadrotor plant, used practical actuation and NMPC at `v_max=10`: the full
+closed radius-8m/altitude-3m circuit completed
 (no solver failures, `position_rmse_m≈0.28`, `position_max_m≈0.65`), with the
 LiDAR node returning real hits against the converted garden geometry
 throughout (hundreds to a few thousand points per 11520-beam scan,

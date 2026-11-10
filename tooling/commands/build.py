@@ -29,14 +29,6 @@ def _colcon_build(
 
 
 @app.command()
-def aero(clean: bool = False, arch: str = "native") -> None:
-    """Build aerodynamics in a Linux container."""
-    _colcon_build(
-        ["aerodynamics"], ["infra/sim_infra/aerodynamics"], clean=clean, arch=arch
-    )
-
-
-@app.command()
 def planner(clean: bool = False, arch: str = "native") -> None:
     """Build the planner and its ROS dependencies in Docker."""
     _colcon_build(["planner"], ["core/ros_packages"], clean=clean, arch=arch)
@@ -59,8 +51,7 @@ def all_(clean: bool = False, arch: str = "native") -> None:
     """Build the core ROS workspace in Docker; excludes the separate nav_infra repo."""
     _colcon_build(
         [],
-        ["core/ros_packages", "core/bringup", "infra/sim_infra/aerodynamics",
-         "infra/sim_infra/simple_sim"],
+        ["core/ros_packages", "core/bringup", "infra/sim_infra/simple_sim"],
         clean=clean, arch=arch, solver=True,
     )
 
@@ -72,13 +63,6 @@ def _bindings(script: str, arch: str) -> None:
          "--build-temp", str(output / "build")],
         arch=arch,
     )
-
-
-@app.command()
-def bindings(arch: str = "native") -> None:
-    """Build Linux aerodynamics bindings under .artifacts/docker-tools/<arch>/."""
-    aero(arch=arch)
-    _bindings("infra/sim_infra/aerodynamics/python/setup.py", arch)
 
 
 @app.command(name="planner-bindings")

@@ -48,8 +48,9 @@ generated models are not part of a fresh public checkout.
 ## Controller change and evidence boundary
 
 The successful configuration keeps the **baseline NMPC bundle and objective**.
-The physical motor constants, 0.076 s motor lag, mixer, inertia, Lyu aerodynamics,
-INDI and authorized source profile are unchanged.
+The physical motor constants, 0.076 s motor lag, mixer, inertia,
+INDI and authorized source profile are unchanged. The plant in this line is a
+quadrotor: there is no wing-force model.
 
 The local mission overrides only **P and D gains on body-FLU Z**, multiplying
 both by three (`--rate-tuning body-z-pd3`). I and both other axes stay
@@ -73,7 +74,7 @@ high-speed failure is not relabelled as a success.
 ## Dual body-fixed video streams
 
 `web/camera_rig.json` specifies **assumed extrinsics, not hardware calibration**.
-The tail-sitter nose/thrust axis is `+Z_FLU`, its belly is `+X_FLU`.
+The quadrotor nose/thrust axis is `+Z_FLU`, its belly is `+X_FLU`.
 
 | Camera | Body position [m] | Optical forward | Image up |
 |---|---|---|---|

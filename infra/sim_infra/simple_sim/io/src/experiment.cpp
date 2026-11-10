@@ -2,7 +2,6 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include <aerodynamics/aero_factory.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -71,12 +70,6 @@ namespace simple_sim
     {
       out << ',' << v.x() << ',' << v.y() << ',' << v.z();
     }
-    void observation_csv(std::ostream &out, const AeroObservation &a)
-    {
-      out << ',' << a.alpha_rad << ',' << a.beta_rad;
-      vector_csv(out, a.velocity_body);
-      out << ',' << a.valid;
-    }
     void state_csv(std::ostream &out, const State &s)
     {
       vector_csv(out, s.position);
@@ -130,11 +123,8 @@ namespace simple_sim
         throw std::invalid_argument("planner and plant mass differ");
       const YAML::Node nmpc_settings =
           YAML::LoadFile(config_.nmpc_yaml.string())["nmpc"];
-      // The NMPC is mass-normalized (specific thrust N/kg, cx in 1/m) and uses
-      // ground speed, so it needs no mass and only supports zero wind.
-      if (config_.controller == "nmpc" && !config_.aero.wind_world.isZero(0.0))
-        throw std::invalid_argument(
-            "NMPC uses ground speed for cx; only zero wind is supported");
+      // The quadrotor NMPC is mass-normalized (specific thrust, N/kg) and uses
+      // ground speed. Wind is not a plant input.
       const auto control_dt = ns_period(nmpc_settings["ctrl_frq"].as<double>());
       planner::core::Planner planner(planning);
       if (cached_reference)
@@ -171,22 +161,11 @@ namespace simple_sim
       RunnerConfig runner_cfg{config_.physics_dt_ns, control_dt,
                               static_cast<std::int64_t>(count)};
       runner_cfg.validate();
-      // One aerodynamic instance, shared by the controller (flight-path
-      // feedforward) and the plant (injected force). The ideal profile's
-      // first-order thrust loop IS the closed loop on the thrust axis, so the
-      // aerodynamic force is not injected along that axis a second time. The
-      // controller's feedforward model must apply the same rule.
-      const bool inject_thrust_axis_aero =
-          config_.aero.inject_thrust_axis < 0
-              ? config_.actuator_model != "ideal_rate_loop"
-              : config_.aero.inject_thrust_axis == 1;
-      const bool zero_thrust_axis_aero = !inject_thrust_axis_aero;
-      const auto aero_model = aerodynamics::make_aero(config_.aero_model);
+      // Quadrotor plant: rotor thrust and moments only. No wing-force model.
       if (config_.controller == "se3")
       {
         controller_ = std::make_unique<Se3Controller>(
-            trajectory_, config_.plant.gravity, config_.se3, aero_model,
-            config_.plant.mass, zero_thrust_axis_aero, config_.aero);
+            trajectory_, config_.plant.gravity, config_.se3);
       }
 #ifdef SIMPLE_SIM_WITH_NMPC
       else
@@ -197,42 +176,13 @@ namespace simple_sim
         tracking_config.ctrl_frq   = nmpc_settings["ctrl_frq"].as<double>();
         tracking_config.initial_specific_thrust =
             nmpc_settings["initial_specific_thrust"].as<double>();
-        tracking_config.cx_alpha_slope =
-            nmpc_settings["cx_alpha_slope"].as<double>();
-        tracking_config.cx_slope_estimation =
-            nmpc_settings["cx_slope_estimation"].as<bool>();
-        tracking_config.cx_slope_forgetting =
-            nmpc_settings["cx_slope_forgetting"].as<double>();
-        tracking_config.cx_slope_limit =
-            nmpc_settings["cx_slope_limit"].as<double>();
-        tracking_config.cx_slope_covariance_limit =
-            nmpc_settings["cx_slope_covariance_limit"].as<double>();
-        tracking_config.cx_slope_min_excitation =
-            nmpc_settings["cx_slope_min_excitation"].as<double>();
-        tracking_config.cx_slope_lag_s =
-            nmpc_settings["cx_slope_lag_s"].as<double>();
         controller_ = std::make_unique<NmpcController>(
             trajectory_, tracking_config, output_dir_ / "nmpc_reference.csv");
       }
 #endif
-      // Any canonical model ("none" resolves to the null model, wrench = 0)
-      ForceModel aero = tailsitter_aero(aero_model, config_.aero);
-      if (zero_thrust_axis_aero)
-      {
-        // See above: matches the prediction model, which carries the
-        // aerodynamic force only along body X.
-        auto inner = std::move(aero);
-        aero       = [inner](const State &state)
-        {
-          Wrench wrench    = inner(state);
-          wrench.force.z() = 0.0;  // body +Z is the thrust axis in FLU
-          return wrench;
-        };
-      }
       if (config_.actuator_model == "practical")
       {
-        config_.motor_model.wind_world = config_.aero.wind_world;
-        const auto model               = std::make_shared<const MotorModel>(
+        const auto model = std::make_shared<const MotorModel>(
             config_.motor_model, config_.plant.mass,
             config_.rate_loop.max_specific_force, config_.rate_loop.max_rate,
             config_.physics_dt_ns);
@@ -267,7 +217,7 @@ namespace simple_sim
             std::make_shared<ThrottleModel>(config_.throttle, seed);
         runner_ = std::make_unique<Runner>(
             runner_cfg,
-            Plant(config_.plant, std::move(aero),
+            Plant(config_.plant, {},
                   [model](const State &s) { return model->derivative(s); }),
             [model](const State &s, const Command &)
             { return model->wrench(s); }, *controller_,
@@ -291,12 +241,8 @@ namespace simple_sim
                 // ideal profile, where a first-order thrust loop drives it, so
                 // on this path its derivative is identically zero and the
                 // effectiveness estimate is meaningless.
-                // The simulated IMU: the total specific force (thrust plus
-                // aerodynamics) along the body axes. The estimator regresses on
-                // its thrust-axis component, exactly as px4ctrl regresses on
-                // the accelerometer; the motor thrust alone is not a
-                // measurement and excluding the aerodynamic part would make the
-                // lumped effectiveness inconsistent with the reading.
+                // The simulated IMU: rotor specific force along the body axes.
+                // The quadrotor plant has no wing contribution on this axis.
                 const double measured = runner_->feedback().specific_force.z();
                 model->set_realized_throttle(
                     realization->command(c.specific_force, measured, inner_dt));
@@ -312,7 +258,7 @@ namespace simple_sim
             std::make_shared<RateLoop>(config_.plant, config_.rate_loop, true);
         runner_ = std::make_unique<Runner>(
             runner_cfg,
-            Plant(config_.plant, std::move(aero), {},
+            Plant(config_.plant, {}, {},
                   [rate_loop](const State &state, const Command &command)
                   { return rate_loop->derivative(state, command); }),
             *rate_loop, *controller_);
@@ -336,18 +282,15 @@ namespace simple_sim
            << ",ref_p_x,ref_p_y,ref_p_z,ref_v_x,ref_v_y,ref_v_z,ref_yb_x,ref_"
               "yb_y,ref_yb_z"
            << ",specific_force_sp,rate_x_sp,rate_y_sp,rate_z_sp,imu_x,imu_y,"
-              "imu_z,aero_fx,aero_fy,aero_fz,aero_mx,aero_my,aero_mz,"
+              "imu_z,external_fx,external_fy,external_fz,external_mx,"
+              "external_my,external_mz,"
               "rpm_1,rpm_2,rpm_3,rpm_4,next_rpm_1,next_rpm_2,next_rpm_3,next_"
               "rpm_4,"
               "rpm_sp_1,rpm_sp_2,rpm_sp_3,rpm_sp_4,duty_1,duty_2,duty_3,duty_4,"
               "applied_fx,applied_fy,applied_fz,applied_mx,applied_my,applied_"
               "mz,"
-              "aero_alpha_rad,aero_beta_rad,air_body_v_x,air_body_v_y,air_body_"
-              "v_z,aero_observation_valid,"
-              "next_aero_alpha_rad,next_aero_beta_rad,next_air_body_v_x,next_"
-              "air_body_v_y,next_air_body_v_z,next_aero_observation_valid,"
-              "next_aero_fx,next_aero_fy,next_aero_fz,next_aero_mx,next_aero_"
-              "my,next_aero_mz,"
+              "next_external_fx,next_external_fy,next_external_fz,"
+              "next_external_mx,next_external_my,next_external_mz,"
               "solver_status,solve_time_ms\n";
       finish("running");
       finished_ = false;
@@ -465,15 +408,13 @@ namespace simple_sim
     squared_position_error_ += error * error;
     squared_velocity_error_ += (s.velocity - ref.v).squaredNorm();
     max_position_error_ = std::max(max_position_error_, error);
-    // Sideslip samples. The statistic is finished in finalize(), where the gate
-    // is 0.8 of the run's own maximum airspeed: below that the vehicle is in
-    // transition or hover, where a small lateral velocity is a large angle and
-    // the trajectory passes through a standstill. Use the same air-relative
-    // FLU velocity and angle definition as the aerodynamic models.
-    const Eigen::Vector3d air_body =
-        s.attitude.conjugate() * (s.velocity - config_.aero.wind_world);
-    const double airspeed = air_body.norm();
-    sideslip_rad_samples_.push_back(aerodynamics::air_angles(air_body).second);
+    // Kinematic sideslip of the body-velocity vector. Zero wind. The gate in
+    // finalize() drops the low-speed samples, where a small lateral velocity
+    // is a large angle.
+    const Eigen::Vector3d body_velocity = s.attitude.conjugate() * s.velocity;
+    const double          airspeed      = body_velocity.norm();
+    sideslip_rad_samples_.push_back(std::atan2(
+        body_velocity.y(), std::hypot(body_velocity.x(), body_velocity.z())));
     sideslip_speed_samples_.push_back(airspeed);
     ++samples_;
   }
@@ -497,8 +438,8 @@ namespace simple_sim
       row << ',' << record.control.command.specific_force;
       vector_csv(row, record.control.command.rates);
       vector_csv(row, record.feedback_before.specific_force);
-      vector_csv(row, record.feedback_before.aerodynamic.force);
-      vector_csv(row, record.feedback_before.aerodynamic.moment);
+      vector_csv(row, record.feedback_before.external.force);
+      vector_csv(row, record.feedback_before.external.moment);
       for (const auto &v :
            {record.before.motors.rpm, record.after.motors.rpm,
             record.before.motors.rpm_sp, record.before.motors.duty})
@@ -506,10 +447,8 @@ namespace simple_sim
           row << ',' << v[i];
       vector_csv(row, record.feedback_before.applied.force);
       vector_csv(row, record.feedback_before.applied.moment);
-      observation_csv(row, record.feedback_before.aerodynamic.observation);
-      observation_csv(row, record.feedback_after.aerodynamic.observation);
-      vector_csv(row, record.feedback_after.aerodynamic.force);
-      vector_csv(row, record.feedback_after.aerodynamic.moment);
+      vector_csv(row, record.feedback_after.external.force);
+      vector_csv(row, record.feedback_after.external.moment);
       row << ',' << record.control.solver_status << ',' << record.solve_time_ms
           << '\n';
       log_ << row.str();
@@ -537,46 +476,44 @@ namespace simple_sim
       log_.flush();
     std::ofstream manifest(output_dir_ / "manifest.json.tmp");
     manifest.exceptions(std::ios::failbit | std::ios::badbit);
-    manifest
-        << std::setprecision(17) << "{\n  \"status\": " << json_string(status)
-        << ",\n  \"reason\": " << json_string(reason)
-        << ",\n  \"csv_schema\": 2,\n  \"world_frame\": \"ENU\",\n  "
-           "\"body_frame\": \"FLU\""
-        << ",\n  \"thrust_axis\": \"+Z\""
-        << ",\n  \"aero_angles\": \"atan2(v_x,v_z); atan2(v_y,hypot(v_x,v_z))\""
-        << ",\n  \"controller\": " << json_string(config_.controller)
-        << ",\n  \"build_revision\": " << json_string(AP_PNC_BUILD_REVISION)
-        << ",\n  \"build_dirty\": " << AP_PNC_BUILD_DIRTY
-        << ",\n  \"compiler\": " << json_string(AP_PNC_BUILD_COMPILER)
-        << ",\n  \"platform\": " << json_string(AP_PNC_BUILD_PLATFORM)
-        << ",\n  \"nmpc_bundle_sha256\": "
-        << json_string(AP_PNC_NMPC_BUNDLE_SHA256)
-        << ",\n  \"actuator_model\": " << json_string(config_.actuator_model)
-        << ",\n  \"nmpc_prediction_model\": \""
-        << (config_.controller == "nmpc" ? "command_integrator"
-                                         : "not_applicable")
-        << "\""
-        << ",\n  \"nmpc_aero_axis\": "
-        << json_string(config_.controller == "nmpc" ? "body_x_lumped"
-                                                    : "not_applicable")
-        << ",\n  \"arm_length_scale\": " << config_.arm_length_scale
-        << ",\n  \"aero_model\": " << json_string(config_.aero_model)
-        << ",\n  \"thrust_realization\": "
-        << json_string(config_.throttle.realization)
-        << ",\n  \"aero_validation\": " << json_string(config_.aero_validation)
+    manifest << std::setprecision(17)
+             << "{\n  \"status\": " << json_string(status)
+             << ",\n  \"reason\": " << json_string(reason)
+             << ",\n  \"csv_schema\": 3,\n  \"world_frame\": \"ENU\",\n  "
+                "\"body_frame\": \"FLU\""
+             << ",\n  \"vehicle\": \"quadrotor\""
+             << ",\n  \"thrust_axis\": \"+Z\""
+             << ",\n  \"external_wrench\": \"zero\""
+             << ",\n  \"controller\": " << json_string(config_.controller)
+             << ",\n  \"build_revision\": "
+             << json_string(AP_PNC_BUILD_REVISION)
+             << ",\n  \"build_dirty\": " << AP_PNC_BUILD_DIRTY
+             << ",\n  \"compiler\": " << json_string(AP_PNC_BUILD_COMPILER)
+             << ",\n  \"platform\": " << json_string(AP_PNC_BUILD_PLATFORM)
+             << ",\n  \"nmpc_bundle_sha256\": "
+             << json_string(AP_PNC_NMPC_BUNDLE_SHA256)
+             << ",\n  \"actuator_model\": "
+             << json_string(config_.actuator_model)
+             << ",\n  \"nmpc_prediction_model\": \""
+             << (config_.controller == "nmpc" ? "quadrotor_command_integrator"
+                                              : "not_applicable")
+             << "\""
+             << ",\n  \"arm_length_scale\": " << config_.arm_length_scale
+             << ",\n  \"thrust_realization\": "
+             << json_string(config_.throttle.realization)
 #ifdef SIMPLE_SIM_WITH_NMPC
-        << ",\n  \"nmpc_solver_abi\": " << NMPC_SOLVER_ABI
+             << ",\n  \"nmpc_solver_abi\": " << NMPC_SOLVER_ABI
 #endif
-        << ",\n  \"integrator\": \"rk4\",\n  \"physics_dt_ns\": "
-        << config_.physics_dt_ns << ",\n  \"control_dt_ns\": "
-        << (runner_ ? runner_->control_dt_ns() : 0)
-        << ",\n  \"reference_terminal_policy\": \"hold_last_point\""
-        << ",\n  \"terminal_hold_s\": " << config_.terminal_hold_s
-        << ",\n  \"trajectory_duration_s\": "
-        << (trajectory_ ? trajectory_->duration() : 0.0)
-        << ",\n  \"committed_steps\": " << (runner_ ? runner_->index() : 0)
-        << ",\n  \"time_ns\": " << (runner_ ? runner_->time_ns() : 0)
-        << ",\n  \"stochastic_model\": false\n}\n";
+             << ",\n  \"integrator\": \"rk4\",\n  \"physics_dt_ns\": "
+             << config_.physics_dt_ns << ",\n  \"control_dt_ns\": "
+             << (runner_ ? runner_->control_dt_ns() : 0)
+             << ",\n  \"reference_terminal_policy\": \"hold_last_point\""
+             << ",\n  \"terminal_hold_s\": " << config_.terminal_hold_s
+             << ",\n  \"trajectory_duration_s\": "
+             << (trajectory_ ? trajectory_->duration() : 0.0)
+             << ",\n  \"committed_steps\": " << (runner_ ? runner_->index() : 0)
+             << ",\n  \"time_ns\": " << (runner_ ? runner_->time_ns() : 0)
+             << ",\n  \"stochastic_model\": false\n}\n";
     manifest.close();
     fs::rename(output_dir_ / "manifest.json.tmp",
                output_dir_ / "manifest.json");

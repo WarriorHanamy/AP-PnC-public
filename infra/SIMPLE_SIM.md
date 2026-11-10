@@ -11,7 +11,7 @@ then exports and independently verifies a Rerun recording. It remains the
 benchmark path; the viewer opens only after completion.
 
 The separate [ROS2 development simulator](DEV_SIM.md) uses the same
-plant with a practical actuator profile and Lyu aerodynamics. It adds a pillar
+plant with a practical actuator profile. It adds a pillar
 point-cloud scene and pose-dependent first-return LiDAR, with pause/step/reset.
 The tracking kernel itself still has no collision or contact dynamics.
 
@@ -28,7 +28,7 @@ The tracking kernel itself still has no collision or contact dynamics.
 ```text
 simple_sim/
   core/{include/simple_sim,src}/   # Eigen + standard library only
-  adapters/{include,src}/          # controller/aerodynamics owner interfaces
+  adapters/{include,src}/          # SE3 and NMPC controller adapters
   io/{include,src}/                # config snapshots, trajectory export, metrics/logs
   app/main.cpp                    # headless executable
   ros/src/sim_node.cpp             # observation + pause/resume/step/reset
@@ -64,16 +64,14 @@ ROS timers only schedule complete Runner transactions. Publishing `/clock` is
 an observation of those commits, not the synchronization mechanism.
 
 Physics uses world **ENU**, body **FLU**, a Hamilton quaternion rotating body
-vectors into world, and diagonal rigid-body inertia. All aerodynamic and motor
-models calculate directly in FLU, with collective thrust along **+Z body**.
-Air velocity is `R_WB.T * (v_world - wind_world)`;
-`alpha=atan2(v_B.x,v_B.z)` and `beta=atan2(v_B.y,hypot(v_B.x,v_B.z))`.
+vectors into world, and diagonal rigid-body inertia. The quadrotor plant and
+its motors use FLU, with collective thrust along **+Z body** and no wing force.
 IMU output is ideal body-FLU specific force, excluding gravity.
 
 Calibrated geometry, mixer, damping and PID parameters are imported into FLU
 once during job preparation; source snapshots remain untouched. Runtime actuator
-configuration requires `body_frame: FLU`. Recorded aerodynamic velocity columns
-are `air_body_v_*`; manifest CSV schema 2 states all frame and angle conventions.
+configuration requires `body_frame: FLU`. Manifest CSV schema 3 records the
+zero external wrench as `external_f*` / `external_m*`.
 
 NMPC commands collective specific force in **N/kg** and body-FLU rates;
 vehicle mass is applied exactly once by the actuator to obtain newtons. The
@@ -83,7 +81,7 @@ limits drives the rigid body throughout each physics step. It is an idealized
 inner loop, not an identified PX4 actuator model; gains require experiment-specific
 validation. This simulator does not promise flight-calibrated tracking accuracy.
 
-Non-finite inputs, invalid configuration, unsupported aero models and solver
+Non-finite inputs, invalid configuration and solver
 failures terminate the experiment. Existing accepted solver status `2` is retained
 and counted explicitly. There is no silent force-zeroing or last-command fallback.
 Without ground contact, negative altitude is possible and is not corrected.
@@ -97,7 +95,7 @@ uv run ap-pnc gen-nmpc-lib
 uv run ap-pnc build simple-sim
 
 # Headless: no ROS graph, RViz or K3s required.
-uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --aero lyu --vmax 8
+uv run --project "$AP_PNC_DIR" ap-pnc benchmark --profile ideal --vmax 8
 # Interactive pillar/LiDAR development is a separate entry point:
 uv run --project "$AP_PNC_DIR" ap-pnc dev-sim prepare
 
@@ -122,7 +120,7 @@ simulation state, and returns to paused time zero. Reset does not reload/replan;
 restart to apply configuration changes.
 
 Observation topics: `/clock`, `/simple_sim/odom`, `/simple_sim/imu`,
-`/simple_sim/aero_wrench`, `/simple_sim/path`, `/simple_sim/reference`.
+`/simple_sim/external_wrench`, `/simple_sim/path`, `/simple_sim/reference`.
 Odometry pose is world-frame; twist and wrench are body-frame. RViz uses
 `use_sim_time`. Visualization is decimated and its path history is bounded.
 The default ROS middleware is used; no custom RMW/FastDDS profiles are supplied.
@@ -157,7 +155,7 @@ and pause/resume/step/reset in an isolated localhost ROS domain. None are
 flight-performance acceptance tests. Repeated builds/platforms are not promised
 bitwise identical floating-point behavior.
 
-### Acceptance: no aero, then Lyu, planning v_max = 9 m/s
+### Acceptance: quadrotor NMPC, planning v_max = 9 m/s
 
 ```bash
 ctest --test-dir "$AP_PNC_DIR/.artifacts/colcon/build/simple_sim" \
@@ -167,15 +165,12 @@ ctest --test-dir "$AP_PNC_DIR/.artifacts/colcon/build/simple_sim" \
 This test executes the **real NMPC bundle**, not the fake contract solver:
 
 1. Write run-local copies of the bringup configs and set planner `cost.v_max: 9.0`.
-2. Plan once; run the full available horizon-covered interval with `aero.model: none`.
-3. Reuse the exact same planner trajectory and all other parameters with `aero.model: lyu`.
-   (`aero.model` accepts the canonical set `lyu | phi | ma | advanced | none`; the
-   acceptance regression intentionally exercises `none` and `lyu`.)
-4. Repeat each case; require completion, finite state/control, no rejected solver
-   result, and exact state/reference/control replay (wall time excluded).
+2. Plan once and run the full available horizon-covered interval on the quadrotor plant.
+3. Repeat the same trajectory; require completion, finite state/control, no rejected
+   solver result, and exact state/reference/control replay (wall time excluded).
 
 The canonical flight `planning.yaml` is not edited. `acceptance.json` under
-`.artifacts/benchmark/simple_sim_acceptance_<id>/` links the four individual runs
+`.artifacts/benchmark/simple_sim_acceptance_<id>/` links the repeated runs
 and reports sampled reference/actual speed peaks and position errors. Planner
 speed limits are soft optimization constraints, so the measured peak is reported
 rather than silently clipping the trajectory. Completion/replay is the current

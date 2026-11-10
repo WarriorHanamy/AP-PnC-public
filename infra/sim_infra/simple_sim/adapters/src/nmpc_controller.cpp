@@ -28,8 +28,6 @@ namespace simple_sim
         for (const auto *axis : {"x", "y", "z"})
           trace_file_ << ",planner_" << name << '_' << axis;
       trace_file_ << ",planner_specific_thrust,fallback";
-      for (int i = 0; i < NMPC_NP; ++i)
-        trace_file_ << ",parameter_" << i;
       for (int i = 0; i < NMPC_NX; ++i)
         trace_file_ << ",initial_state_" << i;
       for (const auto *prefix : {"u0_derivative_", "published_command_"})
@@ -83,7 +81,8 @@ namespace simple_sim
     nmpc::TrackingResult result;
     try
     {
-      result = controller_.compute(x, feedback.specific_force.x(), horizon);
+      (void)feedback;
+      result = controller_.compute(x, horizon);
     }
     catch (...)
     {
@@ -124,8 +123,6 @@ namespace simple_sim
         for (int a = 0; a < 3; ++a)
           trace_file_ << ',' << v[a];
       trace_file_ << ',' << r.thrust << ',' << r.flatness_fallback;
-      for (double p : trace.parameters)
-        trace_file_ << ',' << p;
       for (double x : trace.state)
         trace_file_ << ',' << x;
       for (const auto &values :

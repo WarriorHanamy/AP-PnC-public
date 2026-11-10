@@ -28,7 +28,7 @@ def test_tools_only_run_docker_with_target_isolation(tmp_path, monkeypatch, arch
     assert "PYTHONDONTWRITEBYTECODE=1" in command
 
 
-@pytest.mark.parametrize("name", ["aero", "planner", "nmpc", "all_", "bindings", "planner_bindings"])
+@pytest.mark.parametrize("name", ["planner", "nmpc", "all_", "planner_bindings"])
 def test_build_commands_never_invoke_host_compilers(monkeypatch, name):
     run = Mock()
     monkeypatch.setattr(container_tools, "run", run)
@@ -43,12 +43,12 @@ def test_build_commands_never_invoke_host_compilers(monkeypatch, name):
                 assert Path(arg).is_relative_to("/workspace")
     if name in ("nmpc", "all_"):
         assert run.call_args.kwargs["solver"]
-    if name in ("bindings", "planner_bindings"):
+    if name == "planner_bindings":
         assert "--force" in run.call_args.args[0]
 
 
 @pytest.mark.parametrize(
-    "name", ["all_", "vmap", "jax_trim", "casadi", "frame_conversion", "colcon", "colcon_result"]
+    "name", ["pytest", "colcon", "colcon_result"]
 )
 def test_numerical_test_commands_only_dispatch_containers(monkeypatch, name):
     run = Mock()

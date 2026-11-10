@@ -68,7 +68,7 @@ def prepare(*, controller="nmpc", v_max=4.0, output=None, scene="pillars",
         shutil.copy2(points, job / "scene" / points.name)
     shutil.copy2(profile, job / "profile.yaml")
     shutil.copy2(provenance, job / "upstream-provenance.json")
-    request = JobRequest(profile="practical", aero="lyu", v_max=v_max, hold_s=2.0,
+    request = JobRequest(profile="practical", v_max=v_max, hold_s=2.0,
                          overrides={"simple_sim.controller": controller,
                                     "simple_sim.ros.publish_stride": 1,
                                     "problem_formulation.basic_traj.radius": 8.0,
@@ -80,7 +80,7 @@ def prepare(*, controller="nmpc", v_max=4.0, output=None, scene="pillars",
     dirty = bool(subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True).strip())
     (job / "dev-sim.json").write_text(json.dumps({
         "schema": "ap-pnc/ros2-dev-sim/v1", "source_revision": revision, "source_dirty": dirty,
-        "profile": "practical", "aero": "lyu", "controller": controller,
+        "profile": "practical", "vehicle": "quadrotor", "controller": controller,
         "scene": scene, "corridor_source": corridor_source, "ros_domain_id": 213,
         "hardware_connected": False,
         "collision_dynamics": False, "lidar_model": scene_spec["lidar_model"],

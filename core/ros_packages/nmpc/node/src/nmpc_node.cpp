@@ -17,7 +17,6 @@
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
-#include <sensor_msgs/msg/imu.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <stdexcept>
 #include <vector>
@@ -38,20 +37,12 @@ class NMPC : public rclcpp::Node
       path = std::filesystem::path(root) / "core/bringup/config/nmpc.yaml";
     const auto           n = YAML::LoadFile(path.string())["nmpc"];
     nmpc::TrackingConfig cfg;
-    cfg.horizon_s                 = n["horizon_s"].as<double>();
-    cfg.traj_res_s                = n["traj_res_s"].as<double>();
-    cfg.ctrl_frq                  = n["ctrl_frq"].as<double>();
-    cfg.initial_specific_thrust   = n["initial_specific_thrust"].as<double>();
-    cfg.cx_alpha_slope            = n["cx_alpha_slope"].as<double>();
-    cfg.cx_slope_estimation       = n["cx_slope_estimation"].as<bool>();
-    cfg.cx_slope_forgetting       = n["cx_slope_forgetting"].as<double>();
-    cfg.cx_slope_limit            = n["cx_slope_limit"].as<double>();
-    cfg.cx_slope_covariance_limit = n["cx_slope_covariance_limit"].as<double>();
-    cfg.cx_slope_min_excitation =
-        n["cx_slope_min_excitation"].as<double>(cfg.cx_slope_min_excitation);
-    cfg.cx_slope_lag_s = n["cx_slope_lag_s"].as<double>(cfg.cx_slope_lag_s);
-    controller_        = std::make_unique<nmpc::TrackingController>(cfg);
-    const auto qos     = rclcpp::QoS(1).reliable();
+    cfg.horizon_s               = n["horizon_s"].as<double>();
+    cfg.traj_res_s              = n["traj_res_s"].as<double>();
+    cfg.ctrl_frq                = n["ctrl_frq"].as<double>();
+    cfg.initial_specific_thrust = n["initial_specific_thrust"].as<double>();
+    controller_    = std::make_unique<nmpc::TrackingController>(cfg);
+    const auto qos = rclcpp::QoS(1).reliable();
     control_pub_ =
         create_publisher<interface::msg::Control>("/nmpc/control", qos);
     ready_pub_ =
@@ -68,24 +59,18 @@ class NMPC : public rclcpp::Node
           ready.data = true;
           ready_pub_->publish(ready);
         });
-    imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-        "/mavros/imu/data_raw", rclcpp::SensorDataQoS(),
-        [this](const sensor_msgs::msg::Imu &msg)
-        { specific_force_x_ = msg.linear_acceleration.x; });
     reference_sub_ = create_subscription<interface::msg::ReferenceHorizon>(
         "/nmpc/reference", qos,
         [this](const interface::msg::ReferenceHorizon &msg) { solve(msg); });
   }
 
  private:
-  std::unique_ptr<nmpc::TrackingController> controller_;
-  std::array<double, 13>                    state_{};
-  double                                    specific_force_x_ = 0.0;
-  bool                                      state_ready_      = false;
+  std::unique_ptr<nmpc::TrackingController>              controller_;
+  std::array<double, 13>                                 state_{};
+  bool                                                   state_ready_ = false;
   rclcpp::Subscription<interface::msg::State>::SharedPtr state_sub_;
   rclcpp::Subscription<interface::msg::ReferenceHorizon>::SharedPtr
                                                              reference_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr     imu_sub_;
   rclcpp::Publisher<interface::msg::Control>::SharedPtr      control_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr          ready_pub_;
   rclcpp::Publisher<interface::msg::TrackingInfo>::SharedPtr tracking_pub_;
@@ -105,17 +90,16 @@ class NMPC : public rclcpp::Node
         horizon.push_back(nmpc::cost_reference({p.pos[0], p.pos[1], p.pos[2]},
                                                {p.vel[0], p.vel[1], p.vel[2]},
                                                {p.yb[0], p.yb[1], p.yb[2]}));
-      const auto start = std::chrono::steady_clock::now();
-      const auto result =
-          controller_->compute(state_, specific_force_x_, horizon);
+      const auto              start  = std::chrono::steady_clock::now();
+      const auto              result = controller_->compute(state_, horizon);
       interface::msg::Control command;
       command.timestamp =
           static_cast<std::uint64_t>(get_clock()->now().nanoseconds() / 1000);
       command.rates_sp          = result.rates;
       command.specific_force_sp = result.specific_force;
       command.sol_time          = std::chrono::duration<double, std::milli>(
-                                      std::chrono::steady_clock::now() - start)
-                                      .count();
+                             std::chrono::steady_clock::now() - start)
+                             .count();
       control_pub_->publish(command);
       if (!reference.tracking_valid)
         return;
@@ -140,7 +124,6 @@ class NMPC : public rclcpp::Node
       info.alpha      = static_cast<float>(std::atan2(vb.x(), vb.z()));
       info.beta =
           static_cast<float>(std::atan2(vb.y(), std::hypot(vb.x(), vb.z())));
-      info.cx = static_cast<float>(controller_->aero_coefficient_x());
       tracking_pub_->publish(info);
     }
     catch (const std::exception &e)

@@ -58,31 +58,13 @@ if(SIMPLE_SIM_BUILD_APP)
   if(TARGET yaml-cpp::yaml-cpp AND NOT TARGET yaml-cpp)
     add_library(yaml-cpp ALIAS yaml-cpp::yaml-cpp)
   endif()
-  # Reuse owner sources directly: neither reference definitions nor aero algorithms live here.
+  # Reuse owner sources directly: reference definitions live in the planner.
   add_subdirectory(${AP_PNC_DIR}/core/ros_packages/planner/src
                    ${CMAKE_CURRENT_BINARY_DIR}/planner_core)
-  set(AERO_DIR ${AP_PNC_DIR}/infra/sim_infra/aerodynamics)
-  # All five canonical models (lyu | phi | ma | advanced | none) compile
-  # in-tree, exactly like the aerodynamics package builds them; parameters
-  # load from config/aero/<model>.yaml at runtime (AP_PNC_DIR).
-  find_package(spdlog REQUIRED)
-  add_library(simple_sim_aero STATIC
-    ${AERO_DIR}/src/zhang_lyu_aerodynamics.cpp
-    ${AERO_DIR}/src/phi_aerodynamics.cpp
-    ${AERO_DIR}/src/bspline_aerodynamics.cpp
-    ${AERO_DIR}/src/advanced_lift_drag.cpp
-    ${AERO_DIR}/src/non_aerodynamics.cpp
-    ${AERO_DIR}/src/aero_factory.cpp
-    ${AERO_DIR}/src/MatlabGenerated/Zhang/Aerodynamics.cpp
-    ${AERO_DIR}/src/MatlabGenerated/Zhang/rt_nonfinite.cpp
-  )
-  target_include_directories(simple_sim_aero PUBLIC ${AERO_DIR}/include
-    PRIVATE ${AERO_DIR}/src/MatlabGenerated/Zhang/include)
-  target_link_libraries(simple_sim_aero PUBLIC Eigen3::Eigen spdlog::spdlog yaml-cpp)
 
-  add_library(simple_sim_adapters STATIC adapters/src/se3_controller.cpp adapters/src/aero_model.cpp)
+  add_library(simple_sim_adapters STATIC adapters/src/se3_controller.cpp)
   target_include_directories(simple_sim_adapters PUBLIC adapters/include)
-  target_link_libraries(simple_sim_adapters PUBLIC simple_sim_core planner_core simple_sim_aero)
+  target_link_libraries(simple_sim_adapters PUBLIC simple_sim_core planner_core)
   set(NMPC_BUNDLE_SHA256 "disabled")
   if(SIMPLE_SIM_WITH_NMPC)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -149,9 +131,6 @@ if(BUILD_TESTING)
     target_link_libraries(planner_flythrough_test PRIVATE planner_core)
     add_test(NAME planner_flythrough COMMAND planner_flythrough_test
       ${AP_PNC_DIR}/core/bringup/config/planning.yaml)
-    add_executable(simple_sim_aero_flu_test test/test_aero_flu.cpp)
-    target_link_libraries(simple_sim_aero_flu_test PRIVATE simple_sim_aero)
-    add_test(NAME simple_sim_aero_flu COMMAND simple_sim_aero_flu_test)
     add_executable(simple_sim_adapters_test test/test_adapters.cpp)
     target_link_libraries(simple_sim_adapters_test PRIVATE simple_sim_adapters)
     add_test(NAME simple_sim_adapters COMMAND simple_sim_adapters_test)

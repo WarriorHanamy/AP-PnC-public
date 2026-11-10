@@ -19,7 +19,9 @@ namespace simple_sim
   class Plant
   {
    public:
-    explicit Plant(PlantConfig config, ForceModel aerodynamic = {},
+    // `external` is an optional body-FLU wrench. The quadrotor plant passes
+    // none: rotor force and moment are the only applied loads.
+    explicit Plant(PlantConfig config, ForceModel external = {},
                    MotorDerivative motors = {}, ThrustDerivative thrust = {});
     State    advance(const State &state, const Command &command, double dt,
                      const Actuation &actuation) const;
@@ -29,10 +31,10 @@ namespace simple_sim
 
    private:
     PlantConfig      config_;
-    ForceModel       aerodynamic_;
+    ForceModel       external_;
     MotorDerivative  motors_;
     ThrustDerivative thrust_;
-    Wrench           aero(const State &state) const;
+    Wrench           external_wrench(const State &state) const;
   };
 
 }  // namespace simple_sim

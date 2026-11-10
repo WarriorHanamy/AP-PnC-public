@@ -104,8 +104,8 @@ def test_sweep_passes_actual_speed_and_terminal_hold(vmax, tmp_path, monkeypatch
     assert index["v_max_setting_mps"] == vmax
     assert index["terminal_hold_s"] == 2.0
     assert index["mass_override_kg"] == 2.0
-    assert len(requests) == 3
-    assert {request.aero for request in requests} == {"none", "lyu", "phi"}
+    assert len(requests) == 1
+    assert not hasattr(requests[0], "aero")
     assert all(
         (request.v_max, request.hold_s, request.mass_kg) == (vmax, 2.0, 2.0) for request in requests
     )
@@ -208,7 +208,6 @@ def test_failed_sweep_produces_error_row_instead_of_crashing(tmp_path, monkeypat
 
     monkeypatch.setattr(stack_sweep, "_run_once", reject)
     rows = stack_sweep.run_matrix(
-        aeros=("lyu",),
         v_maxs=(4.0,),
         variants=("nmpc",),
         profiles=("practical",),

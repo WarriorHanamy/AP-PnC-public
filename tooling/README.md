@@ -49,7 +49,7 @@ not the asset-free benchmark.
 
 ```bash
 uv run --project "$AP_PNC_DIR" ap-pnc lint
-uv run --project "$AP_PNC_DIR" ap-pnc test all
+uv run --project "$AP_PNC_DIR" ap-pnc test colcon
 ```
 
 The default Docker target matches the host CPU architecture. See the
