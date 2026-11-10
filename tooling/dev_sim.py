@@ -30,6 +30,12 @@ SCENES = {
     "pillars": {"config": "lidar_sim.yaml", "lidar_model": "analytic snapshot first returns"},
     "garden-3dgs": {"config": "lidar_sim_3dgs_garden.yaml", "lidar_model": "voxelized point-cloud snapshot first returns",
                     "points": ".artifacts/dev-sim/scenes/garden_points.ply"},
+    "super-high-speed": {
+        "config": "lidar_sim_super_high_speed.yaml",
+        "lidar_model": "voxelized point-cloud snapshot first returns",
+        "points": ".artifacts/dev-sim/scenes/random_map_24_6635.ply",
+        "planning": "planning_super_high_speed.yaml",
+    },
 }
 
 
@@ -60,20 +66,26 @@ def prepare(*, controller="nmpc", v_max=4.0, output=None, scene="pillars",
         raise FileExistsError(f"refusing to overwrite {job}")
     (job / "config").mkdir(parents=True)
     (job / "recordings").mkdir()
-    for name in ("simple_sim.yaml", "planning.yaml", "nmpc.yaml"):
+    for name in ("simple_sim.yaml", "nmpc.yaml"):
         shutil.copy2(root / "core/bringup/config" / name, job / "config" / name)
+    planning_name = scene_spec.get("planning", "planning.yaml")
+    shutil.copy2(root / "core/bringup/config" / planning_name, job / "config/planning.yaml")
     shutil.copy2(root / "core/bringup/config" / scene_spec["config"], job / "config/lidar_sim.yaml")
     if points is not None:
         (job / "scene").mkdir()
         shutil.copy2(points, job / "scene" / points.name)
     shutil.copy2(profile, job / "profile.yaml")
     shutil.copy2(provenance, job / "upstream-provenance.json")
+    overrides = {"simple_sim.controller": controller,
+                 "simple_sim.ros.publish_stride": 1,
+                 "problem_formulation.corridor_source": corridor_source}
+    # The default dev circuit is a radius-8 circle. A scene that brings its own
+    # planning.yaml (the SUPER waypoint round trip) must not be rewritten into that circle.
+    if "planning" not in scene_spec:
+        overrides["problem_formulation.basic_traj.radius"] = 8.0
+        overrides["problem_formulation.basic_traj.height"] = 3.0
     request = JobRequest(profile="practical", aero="lyu", v_max=v_max, hold_s=2.0,
-                         overrides={"simple_sim.controller": controller,
-                                    "simple_sim.ros.publish_stride": 1,
-                                    "problem_formulation.basic_traj.radius": 8.0,
-                                    "problem_formulation.basic_traj.height": 3.0,
-                                    "problem_formulation.corridor_source": corridor_source})
+                         overrides=overrides)
     request.validate()
     write_configuration(job, request)
     revision = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()

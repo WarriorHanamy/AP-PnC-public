@@ -10,6 +10,7 @@ PX4 integration have additional prerequisites.
 | --- | --- | --- |
 | [Offline simple-sim](SIMPLE_SIM.md) | Lockstep trajectory tracking and controller comparisons. | The `ideal` actuator profile works without private data; no PX4 or ROS graph is needed for offline runs. |
 | [ROS2 development scene](DEV_SIM.md) | Interactive pillar/LiDAR simulation with pause, step and reset. | Requires a locally extracted practical actuator profile. |
+| [SUPER high-speed scene](SUPER_SCENE.md) | Phase-1 point cloud, waypoint route, and optional external map/corridor hooks. | Does not vendor SUPER. Same practical-profile requirement as the dev scene. |
 | [Live 3DGS demo](CITY_DEMO_START.md) | Closed-loop flight in a rendered city scene. | Requires licensed local scene assets and the practical actuator profile. |
 | [Gazebo / PX4](GAZEBO.md) | SITL integration with the navigation sidecar and core. | Read its validation status and build restrictions before use; complete flight acceptance is not established. |
 

@@ -1,0 +1,98 @@
+# Waypoint mission for SUPER's high-speed benchmark scene.
+#
+# This file does not replace core/bringup/config/planning.yaml. dev-sim prepare
+# copies it onto the job's planning.yaml when --scene super-high-speed is set.
+# The seed is the published round trip, not the default circle:
+#   start / return (0, -50, 1.5), far point (0, 50, 1.5).
+# SUPER's perfect_drone_sim init_yaw is 1.5741 rad (nearly +Y). The route
+# tangent is +Y, so the cruise heading is that direction. At rest the existing
+# tailsitter flatness hover policy is unchanged; this file does not add a
+# second attitude model.
+#
+# SUPER static_high_speed.yaml sets max_vel 25 m/s for a quadrotor. That limit
+# is not used here. 8 m/s is the scene recommendation; `dev-sim prepare
+# --v-max` overwrites cost.v_max (the CLI default is 4).
+#
+# corridor_source stays on the existing switch. box_sfc flies the waypoint
+# boxes below. map_sfc replans through the same waypoints from the ground-truth
+# /lidar_sim/map. map_backend / corridor_backend stay on voxel + FIRI unless an
+# external ROG-Map or ROS-free CIRI was linked. See infra/SUPER_SCENE.md.
+problem_formulation:
+  piece_n: 8
+  corridor_source: box_sfc
+  map_backend: voxel
+  corridor_backend: firi
+  waypoint_speed_m_s: 8.0
+  waypoints:
+    - [0.0, -50.0, 1.5]
+    - [0.0, 50.0, 1.5]
+    - [0.0, -50.0, 1.5]
+  box:
+    # Axis-aligned half-extents [m]. Y is the route direction, so left/right
+    # overlap consecutive samples. X only has to contain the small lateral seed
+    # nudge. These boxes are not a claim that the path avoids the point cloud;
+    # use corridor_source: map_sfc for the ground-truth voxel corridor.
+    left: 16.0
+    right: 16.0
+    up: 2.0
+    down: 1.2
+    front: 4.0
+    back: 4.0
+  basic_traj:
+    # Unused while waypoints has two or more points. Kept valid so the planner
+    # can still construct its seed object. Type 4 is a line, not the default
+    # circle (type 2).
+    type: 4
+    radius: 25.0
+    height: 1.5
+    rate: 0.1
+    curvature_factor: 0.8
+    wave_len: 50.0
+  cost:
+    v_max: 8.0
+    omg_x_max: 0.8
+    omg_y_max: 2.5
+    omg_z_max: 0.8
+    acc_max: 12.0
+    tangential_acc_min: -2.0
+    tangential_acc_max: 2.0
+    thrust_min: 2.0
+    thrust_max: 22.0
+    thrust_weight: 10000.0
+    vel_weight: 10000.0
+    acc_weight: 0.0
+    omg_x_weight: 20000.0
+    omg_y_weight: 10000.0
+    omg_z_weight: 20000.0
+    tangential_acc_weight: 10000.0
+    time_weight: 10000.0
+    omg_consistent_weight: 0.0
+  minco:
+    smoothing_eps: 0.01
+    integral_intervs: 30
+    rel_cost_tol: 1.0e-05
+  flatness:
+    phi:
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - -0.09408
+    mass: 2.0
+  map:
+    map_topic: /lidar_sim/map
+    voxel_scale_m: 0.2
+    dilate_radius_m: 0.3
+    bounds_margin_m: 1.0
+    replan_margin_s: 1.0
+    drift_threshold_m: 0.5
+perception:
+  points_topic: /lidar_sim/points
+  odom_topic: /simple_sim/odom
+  world_cloud_topic: /planner/cloud_world
+  world_frame: world
+  body_frame: base_link
+  sensor_frame: lidar

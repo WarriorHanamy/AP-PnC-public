@@ -26,6 +26,7 @@ find_package(rclcpp_components REQUIRED)
 find_package(interface REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 add_library(planner_component SHARED
   node/src/planner_node.cpp
@@ -39,6 +40,7 @@ ament_target_dependencies(planner_component
   interface
   std_msgs
   sensor_msgs
+  nav_msgs
 )
 install(TARGETS planner_component
   ARCHIVE DESTINATION lib
@@ -60,6 +62,17 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_grid_astar test/test_grid_astar.cpp)
   target_link_libraries(test_grid_astar planner_core)
+
+  ament_add_gtest(test_map_backends test/test_map_backends.cpp)
+  target_include_directories(test_map_backends PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/node/include)
+  target_link_libraries(test_map_backends planner_core)
+endif()
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/optional_rog_ciri.cmake)
+ap_pnc_link_optional_backends(planner_core)
+if(TARGET planner_component)
+  ap_pnc_link_optional_backends(planner_component)
 endif()
 
 ament_package()

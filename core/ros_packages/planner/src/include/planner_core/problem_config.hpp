@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <Eigen/Dense>
 #include <gcopter/gcopter.hpp>
 #include <string>
 #include <vector>
@@ -124,6 +125,26 @@ namespace planner::core
     // the next leg's initial state, which always comes from the predicted
     // terminal state of the previously-pushed segment.
     double drift_threshold_m = 0.5;
+    // Used only when corridor_backend is the optional external CIRI.
+    double ciri_robot_radius_m = 0.2;
+    int    ciri_iterations     = 2;
+  };
+
+  /**
+   * @brief World-frame LiDAR handoff. Defaults match lidar_sim.
+   *
+   * `points_topic` is the lidar-frame cloud. The node converts it to
+   * `world_frame` before publishing `world_cloud_topic` or calling an
+   * optional map update. The ground-truth `map.map_topic` is already world.
+   */
+  struct PerceptionCfg
+  {
+    std::string points_topic      = "/lidar_sim/points";
+    std::string odom_topic        = "/simple_sim/odom";
+    std::string world_cloud_topic = "/planner/cloud_world";
+    std::string world_frame       = "world";
+    std::string body_frame        = "base_link";
+    std::string sensor_frame      = "lidar";
   };
 
   /**
@@ -138,12 +159,28 @@ namespace planner::core
     // "map_sfc" (corridor built from the sensed map, continuously replanned).
     std::string corridor_source = "box_sfc";
 
-    BoxCfg       box;
-    BasicTrajCfg basic_traj;
-    CostCfg      cost;
-    MincoCfg     minco;
-    FlatnessCfg  flatness;
-    MapCfg       map;
+    // Query and corridor backends. Defaults keep VoxelMap + FIRI. "rog" and
+    // "ciri" require an external prefix at configure time; they are not
+    // vendored. See infra/SUPER_SCENE.md.
+    std::string map_backend      = "voxel";
+    std::string corridor_backend = "firi";
+    // Absolute external ROG-Map yaml. Required only when map_backend is rog.
+    std::string rog_map_config;
+
+    // Empty keeps basic_traj (the default circle/line/lemniscate mission).
+    // Two or more points replace that seed for plan() and mission_route()
+    // without adding another optimizer. Speed is the polyline cruise used to
+    // build the seed, not SUPER's 25 m/s quadrotor limit.
+    std::vector<Eigen::Vector3d> waypoints;
+    double                       waypoint_speed_m_s = 8.0;
+
+    BoxCfg        box;
+    BasicTrajCfg  basic_traj;
+    CostCfg       cost;
+    MincoCfg      minco;
+    FlatnessCfg   flatness;
+    MapCfg        map;
+    PerceptionCfg perception;
   };
 
   /**

@@ -1,0 +1,33 @@
+# SUPER high-speed benchmark geometry for lidar_sim.
+#
+# The point cloud is not stored in this repository. Generate it with
+# infra/sim_infra/lidar_sim/scripts/prepare_super_high_speed_scene.py, then
+# `ap-pnc dev-sim prepare --scene super-high-speed`, which mounts the PLY at
+# the absolute container path below. Pillar and garden scenes are unchanged.
+#
+# Sensor numbers follow mars_uav_sim/perfect_drone_sim/config/high_speed.yaml:
+# 360 deg, vertical FOV 178 deg, 0.3 deg polar resolution, 10 Hz, blind zone
+# 0.1 m, horizon 70 m. lidar_sim accepts at most 128 channels, so the vertical
+# channel count is 128 rather than 178/0.3. Azimuth uses 1200 columns (0.3 deg).
+# simple_sim still has no collision; this cloud is perception geometry only.
+lidar_sim:
+  world_frame: world
+  body_frame: base_link
+  sensor_frame: lidar
+  odom_topic: /simple_sim/odom
+  sensor:
+    channels: 128
+    columns: 1200
+    vertical_fov_deg: 178.0
+    rate_hz: 10.0
+    min_range_m: 0.1
+    max_range_m: 70.0
+    noise_std_m: 0.0
+    seed: 7
+    position_body_m: [0.0, 0.0, 0.12]
+    orientation_body_xyzw: [0.0, 0.0, 0.0, 1.0]
+  scene:
+    type: point_cloud
+    path: /workspace/scene/random_map_24_6635.ply
+    occupancy_radius_m: 0.2
+    step_m: 0.2
