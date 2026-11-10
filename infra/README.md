@@ -12,7 +12,7 @@ PX4 integration have additional prerequisites.
 | [ROS2 development scene](DEV_SIM.md) | Interactive pillar/LiDAR simulation with pause, step and reset. | Requires a locally extracted practical actuator profile. |
 | [Live 3DGS demo](CITY_DEMO_START.md) | Closed-loop flight in a rendered city scene. | Requires licensed local scene assets and the practical actuator profile. |
 | [Gazebo / PX4](GAZEBO.md) | SITL integration with the navigation sidecar and core. | Read its validation status and build restrictions before use; complete flight acceptance is not established. |
-| [Radar-depth YOPO data](LEARN.md) | Collect, pack, and train YOPO on radar rasters. | CIRI is unfinished. `learn train-rl` does not run. |
+| [Radar learning](LEARN.md) | CIRI corridors for RL and eroded depth for YOPO. | Synthetic radar only. CIRI is SUPER's h-polytope. |
 
 Follow the [repository quick start](../README.md#quick-start) to generate the
 solver, build simple-sim and run an ideal-profile benchmark. The

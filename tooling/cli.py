@@ -25,7 +25,7 @@ app.add_typer(dev_sim.app, name="dev-sim", help="ROS2 pillar/LiDAR development s
 app.add_typer(
     learn.app,
     name="learn",
-    help="Radar-depth collection and YOPO training; CIRI is unfinished",
+    help="CIRI corridors for RL and eroded radar depth for YOPO",
 )
 
 

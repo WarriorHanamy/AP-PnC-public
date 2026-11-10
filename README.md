@@ -1,9 +1,9 @@
 # AP-PnC
 
 Quadrotor trajectory generation and tracking. Planning and NMPC for a
-multirotor: collective thrust along body +Z, no wing-force model. A radar
-point cloud can be rasterized to depth and used to train YOPO; see
-[infra/LEARN.md](infra/LEARN.md). CIRI is not implemented.
+multirotor: collective thrust along body +Z, no wing-force model. Synthetic radar
+sweeps feed SUPER CIRI corridors for RL and an accumulate-erode-project depth
+image for YOPO; see [infra/LEARN.md](infra/LEARN.md).
 
 ## Quick start
 

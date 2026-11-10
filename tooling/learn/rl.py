@@ -1,19 +1,20 @@
 """On-policy actor-critic for the reduced quadrotor.
 
-The observation is the same radar-depth summary YOPO uses, so the comparison
-does not give the RL agent a depth camera the baseline does not have. The
-action is collective specific thrust and body rates.
+The observation is a SUPER CIRI corridor: padded h-polytope planes in the body
+frame, plus the goal direction. The action is collective specific thrust and
+body rates.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
+from tooling.learn.ciri import MAX_PLANES
 from tooling.learn.net import ReluMlp
 from tooling.learn.quadrotor import GRAVITY, QuadrotorState
-from tooling.learn.yopo import OBSERVATION_DIM
 
-RL_SIZES = (OBSERVATION_DIM, 32, 5)
+RL_OBSERVATION_DIM = MAX_PLANES * 4 + 3
+RL_SIZES = (RL_OBSERVATION_DIM, 32, 5)
 ACTION_SCALE = np.array([4.0, 1.5, 1.5, 1.0])
 ACTION_STD = 0.4
 

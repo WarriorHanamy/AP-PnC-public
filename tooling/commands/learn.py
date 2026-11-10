@@ -1,21 +1,16 @@
-"""Radar-to-depth collection and YOPO training.
-
-CIRI is not part of this command group. ``train-rl`` stops because that policy
-was supposed to read CIRI, and the CIRI interface has not been specified.
-"""
+"""Collect accumulated radar views, train CIRI-conditioned RL, and train YOPO."""
 
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from tooling.learn.ciri import CiriUnavailable
 from tooling.learn.dataset import collect_dataset, pack_dataset
 from tooling.learn.pipeline import evaluate, smoke as run_smoke, train_rl, train_yopo
 
 app = typer.Typer(
     no_args_is_help=True,
-    help="Collect radar depth, pack a train/val set, and train YOPO. CIRI is unfinished.",
+    help="Radar accumulation: CIRI corridors for RL, eroded depth for YOPO.",
 )
 
 
@@ -35,7 +30,7 @@ def collect(
     samples: Annotated[int, typer.Option(min=2)] = 16,
     seed: int = 0,
 ) -> None:
-    """Simulate radar at random poses and store each cloud with its depth raster."""
+    """Simulate synthetic radar sweeps and store CIRI planes and eroded depth."""
     path = collect_dataset(name, envs=envs, samples_per_env=samples, seed=seed)
     typer.echo(path)
 
@@ -56,7 +51,7 @@ def train_yopo_command(
     updates: Annotated[int, typer.Option(min=1)] = 20,
     seed: int = 0,
 ) -> None:
-    """Train YOPO on stored radar-depth views. Depth is not rendered again."""
+    """Train YOPO on depth made by accumulating, eroding, and projecting radar points."""
     path = train_yopo(_dataset(dataset), updates, seed)
     typer.echo(path)
 
@@ -67,12 +62,13 @@ def train_rl_command(
     updates: Annotated[int, typer.Option(min=1)] = 20,
     seed: int = 0,
 ) -> None:
-    """Refuse to train RL until a CIRI observation interface is specified."""
+    """Train the quadrotor policy on stored SUPER CIRI corridors."""
     try:
-        train_rl(_dataset(dataset), updates, seed)
-    except CiriUnavailable as error:
+        path = train_rl(_dataset(dataset), updates, seed)
+    except (OSError, ValueError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(2) from error
+    typer.echo(path)
 
 
 @app.command("eval")
@@ -80,7 +76,7 @@ def eval_command(
     dataset: Annotated[Path, typer.Option("--dataset", help="Absolute dataset directory")],
     seed: int = 0,
 ) -> None:
-    """Score the saved YOPO weights on the validation split."""
+    """Score YOPO and the CIRI policy on the validation split."""
     try:
         directory = evaluate(_dataset(dataset), seed)
     except (OSError, ValueError) as error:
@@ -91,6 +87,6 @@ def eval_command(
 
 @app.command("smoke")
 def smoke_command(seed: int = 0) -> None:
-    """Collect, pack, and train YOPO on a tiny synthetic radar set."""
+    """Collect, pack, and take one update of RL and YOPO on synthetic radar."""
     directory = run_smoke(seed)
     typer.echo(directory / "comparison.md")

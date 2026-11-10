@@ -1,8 +1,11 @@
-"""Recorded radar-to-depth sets, packed like a YOPO training corpus.
+"""Synthetic radar recordings for the two learning pipelines.
 
-This is not a CIRI dataset. CIRI's representation is unspecified here, so these
-files store radar returns and the depth image rasterized from those returns.
-A synthetic obstacle field is only the simulator that casts the radar rays.
+Each view accumulates radar sweeps in the world frame. From that same cloud:
+
+- RL stores a SUPER CIRI h-polytope (configuration-space corridor).
+- YOPO stores the depth image from erosion followed by projection.
+
+The obstacle field that casts the rays is synthetic. The manifest says so.
 """
 
 from __future__ import annotations
@@ -14,19 +17,30 @@ from pathlib import Path
 import numpy as np
 
 from tooling.env import artifact_path
+from tooling.learn.ciri import MAX_PLANES, corridor_from_points, pad_planes
 from tooling.learn.occupancy import Occupancy
 from tooling.learn.quadrotor import rotation_world_from_body
-from tooling.learn.radar_depth import RadarDepthConfig, depth_from_radar, radar_points
+from tooling.learn.radar_depth import (
+    RadarDepthConfig,
+    accumulate,
+    depth_from_accumulated,
+    radar_points,
+)
 
-SCHEMA = "ap-pnc/radar-depth/v1"
-MAX_RADAR_POINTS = 64
+SCHEMA = "ap-pnc/radar-accumulated/v1"
+MAX_CLOUD_POINTS = 256
+WARMUP_SWEEPS = 2
+SEED_LENGTH_M = 1.2
 
 
 @dataclass(frozen=True)
-class DepthSample:
+class RadarSample:
     depth: np.ndarray
     valid: np.ndarray
-    radar_points: np.ndarray
+    accumulated_points: np.ndarray
+    planes: np.ndarray
+    plane_count: int
+    ciri_success: bool
     position: np.ndarray
     rpy: np.ndarray
     env_index: int
@@ -53,7 +67,7 @@ def resolve_dataset(path: Path) -> Path:
     manifest = resolved / "manifest.json"
     if not manifest.is_file():
         raise FileNotFoundError(
-            f"No radar-depth dataset at {resolved}. Run `ap-pnc learn collect` first."
+            f"No radar dataset at {resolved}. Run `ap-pnc learn collect` first."
         )
     document = json.loads(manifest.read_text())
     if document.get("schema") != SCHEMA:
@@ -62,28 +76,22 @@ def resolve_dataset(path: Path) -> Path:
 
 
 def _environment(env_index: int) -> Occupancy:
-    """Obstacle field used only to simulate radar. It is not CIRI."""
-    shift = 0.35 * env_index
-    xs = np.linspace(0.0, 6.0, 13)
-    left = np.column_stack((xs, np.full_like(xs, 1.2), np.ones_like(xs)))
-    right = np.column_stack((xs, np.full_like(xs, -1.2), np.ones_like(xs)))
-    gate = np.column_stack((np.full(5, 3.0 + shift), np.linspace(-0.8, 0.8, 5), np.ones(5)))
-    return Occupancy(np.vstack((left, right, gate)), voxel_m=0.4, ground_z=0.0)
+    """Synthetic walls used only to cast radar rays."""
+    shift = 0.15 * env_index
+    xs = np.linspace(0.0, 6.0, 25)
+    zs = np.linspace(0.4, 1.6, 4)
+    columns = []
+    for z in zs:
+        columns.append(np.column_stack((xs, np.full_like(xs, 1.5 + shift), np.full_like(xs, z))))
+        columns.append(np.column_stack((xs, np.full_like(xs, -1.5), np.full_like(xs, z))))
+    return Occupancy(np.vstack(columns), voxel_m=0.4, ground_z=0.0)
 
 
-def _sample_pose(occupancy: Occupancy, rng: np.random.Generator) -> tuple[np.ndarray, float]:
-    for _ in range(40):
-        position = np.array([rng.uniform(0.4, 4.8), rng.uniform(-0.5, 0.5), 1.0], dtype=float)
-        if occupancy.clearance(position[None, :])[0] > 0.45:
-            return position, float(rng.uniform(-np.pi, np.pi))
-    return np.array([0.4, 0.0, 1.0]), 0.0
-
-
-def _pad_radar(clouds: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
-    counts = np.array([len(cloud) for cloud in clouds], dtype=np.int32)
-    padded = np.zeros((len(clouds), MAX_RADAR_POINTS, 3), dtype=np.float32)
+def _pad_cloud(clouds: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    counts = np.array([min(len(cloud), MAX_CLOUD_POINTS) for cloud in clouds], dtype=np.int32)
+    padded = np.zeros((len(clouds), MAX_CLOUD_POINTS, 3), dtype=np.float32)
     for index, cloud in enumerate(clouds):
-        kept = cloud[:MAX_RADAR_POINTS]
+        kept = cloud[:MAX_CLOUD_POINTS]
         if len(kept):
             padded[index, : len(kept)] = kept
     return counts, padded
@@ -96,7 +104,7 @@ def collect_dataset(
     seed: int,
     config: RadarDepthConfig | None = None,
 ) -> Path:
-    """Save radar clouds and their depth rasters, one folder per environment."""
+    """Accumulate synthetic radar sweeps and store CIRI planes plus eroded depth."""
     if envs < 1 or samples_per_env < 1:
         raise ValueError("envs and samples_per_env must be positive")
     sensor = config or RadarDepthConfig(range_noise_m=0.0, keep_probability=1.0)
@@ -109,35 +117,67 @@ def collect_dataset(
         folder = raw / f"{env_index:03d}"
         folder.mkdir(exist_ok=True)
         np.save(folder / "environment.npy", occupancy.points.astype(np.float32))
-        depths, valids, positions, rpys, clouds = [], [], [], [], []
-        for _ in range(samples_per_env):
-            position, yaw = _sample_pose(occupancy, rng)
+        depths, valids, positions, rpys = [], [], [], []
+        planes, counts, successes, clouds = [], [], [], []
+        world_sweeps: list[np.ndarray] = []
+        total = samples_per_env + WARMUP_SWEEPS
+        for sweep in range(total):
+            position = np.array([0.4 + 0.45 * sweep, 0.0, 1.0])
+            yaw = 0.0
             rotation = rotation_world_from_body(0.0, 0.0, yaw)
-            points = radar_points(occupancy, position, rotation, sensor, rng)
-            depth, valid = depth_from_radar(points, sensor)
+            body = radar_points(occupancy, position, rotation, sensor, rng)
+            world = body @ rotation.T + position if len(body) else np.zeros((0, 3))
+            world_sweeps.append(world)
+            if sweep < WARMUP_SWEEPS:
+                continue
+            accumulated = accumulate(world_sweeps)
+            if len(accumulated) > MAX_CLOUD_POINTS:
+                accumulated = accumulated[-MAX_CLOUD_POINTS:]
+            body_cloud = (accumulated - position) @ rotation if len(accumulated) else accumulated
+            depth, valid = depth_from_accumulated(body_cloud, sensor)
+            seed_end = position + rotation @ np.array([SEED_LENGTH_M, 0.0, 0.0])
+            polytope = corridor_from_points(accumulated, position, seed_end)
+            block, plane_count = pad_planes(polytope)
             depths.append(depth)
             valids.append(valid)
             positions.append(position)
             rpys.append(np.array([0.0, 0.0, yaw]))
-            clouds.append(points.astype(np.float32))
-        counts, padded = _pad_radar(clouds)
+            planes.append(block)
+            counts.append(plane_count)
+            successes.append(polytope.success)
+            clouds.append(accumulated.astype(np.float32))
+        cloud_counts, cloud_pad = _pad_cloud(clouds)
         np.savez(
             folder / "label.npz",
             depth=np.stack(depths).astype(np.float32),
             valid=np.stack(valids),
             positions=np.stack(positions).astype(np.float32),
             rpy=np.stack(rpys).astype(np.float32),
-            radar_counts=counts,
-            radar_points=padded,
+            planes=np.stack(planes),
+            plane_count=np.asarray(counts, dtype=np.int32),
+            ciri_success=np.asarray(successes, dtype=bool),
+            cloud_count=cloud_counts,
+            accumulated=cloud_pad,
         )
     manifest = {
         "schema": SCHEMA,
-        "generated": True,
-        "label": "synthetic radar point clouds rasterized to depth; not CIRI",
-        "ciri": "unspecified",
-        "pipeline": ["synthetic-environment", "radar-point-cloud", "depth"],
+        "synthetic": True,
+        "label": "synthetic radar sweeps accumulated in a corridor; not a field recording",
+        "pipelines": {
+            "rl": ["accumulate", "ciri"],
+            "yopo": ["accumulate", "erosion", "projection"],
+        },
+        "ciri": {
+            "method": "SUPER CIRI (configuration-space iterative regional inflation)",
+            "source": "hku-mars/SUPER",
+            "planes": "n·x + d <= 0",
+            "max_planes": MAX_PLANES,
+            "robot_r_m": 0.2,
+            "iterations": 2,
+        },
         "envs": envs,
         "samples_per_env": samples_per_env,
+        "warmup_sweeps": WARMUP_SWEEPS,
         "seed": seed,
         "depth": {
             "height": sensor.height,
@@ -145,6 +185,7 @@ def collect_dataset(
             "azimuth_fov_deg": sensor.azimuth_fov_deg,
             "elevation_fov_deg": sensor.elevation_fov_deg,
             "max_range_m": sensor.max_range_m,
+            "erosion_voxel_m": sensor.erosion_voxel_m,
         },
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -157,42 +198,43 @@ def pack_dataset(directory: Path, seed: int = 0, val_fraction: float = 0.2) -> P
     folders = sorted(path for path in (root / "raw").iterdir() if path.is_dir())
     if not folders:
         raise FileNotFoundError(f"{root / 'raw'} has no environment folders")
-    depths, valids, positions, rpys = [], [], [], []
-    counts, clouds, env_ids = [], [], []
+    arrays: dict[str, list[np.ndarray]] = {
+        key: []
+        for key in (
+            "depth",
+            "valid",
+            "positions",
+            "rpy",
+            "planes",
+            "plane_count",
+            "ciri_success",
+            "cloud_count",
+            "accumulated",
+        )
+    }
+    env_ids: list[np.ndarray] = []
     environments = root / "environments"
     environments.mkdir(exist_ok=True)
     for env_index, folder in enumerate(folders):
         label = np.load(folder / "label.npz")
-        count = len(label["depth"])
-        depths.append(label["depth"])
-        valids.append(label["valid"])
-        positions.append(label["positions"])
-        rpys.append(label["rpy"])
-        counts.append(label["radar_counts"])
-        clouds.append(label["radar_points"])
-        env_ids.append(np.full(count, env_index, dtype=np.int32))
+        for key in arrays:
+            arrays[key].append(label[key])
+        env_ids.append(np.full(len(label["depth"]), env_index, dtype=np.int32))
         np.save(environments / f"{env_index:03d}.npy", np.load(folder / "environment.npy"))
-    depth = np.concatenate(depths)
-    order = np.random.default_rng(seed).permutation(len(depth))
-    if len(depth) < 2:
+    stacked = {key: np.concatenate(value) for key, value in arrays.items()}
+    stacked["env_index"] = np.concatenate(env_ids)
+    count = len(stacked["depth"])
+    if count < 2:
         raise ValueError("need at least two views to pack a train/val split")
-    val_count = max(1, int(round(val_fraction * len(depth))))
-    if val_count >= len(depth):
+    order = np.random.default_rng(seed).permutation(count)
+    val_count = max(1, int(round(val_fraction * count)))
+    if val_count >= count:
         val_count = 1
     packed = root / "packed"
     packed.mkdir(exist_ok=True)
-    arrays = {
-        "depth": depth,
-        "valid": np.concatenate(valids),
-        "positions": np.concatenate(positions),
-        "rpy": np.concatenate(rpys),
-        "radar_counts": np.concatenate(counts),
-        "radar_points": np.concatenate(clouds),
-        "env_index": np.concatenate(env_ids),
-    }
     splits = {"train": order[val_count:], "val": order[:val_count]}
     for split, indices in splits.items():
-        np.savez(packed / f"{split}.npz", **{key: value[indices] for key, value in arrays.items()})
+        np.savez(packed / f"{split}.npz", **{key: value[indices] for key, value in stacked.items()})
     (packed / "split.json").write_text(
         json.dumps(
             {"train": int(len(splits["train"])), "val": int(len(splits["val"])), "seed": seed},
@@ -212,7 +254,7 @@ def augment_state(rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, np.
 
 
 class RadarDepthDataset:
-    """One packed split. Depth is the stored radar raster, not a live render."""
+    """One packed split. Depth and CIRI planes are the stored values."""
 
     def __init__(self, directory: Path, split: str):
         if split not in {"train", "val"}:
@@ -226,8 +268,11 @@ class RadarDepthDataset:
         self.valid = stored["valid"]
         self.positions = stored["positions"]
         self.rpy = stored["rpy"]
-        self.radar_counts = stored["radar_counts"]
-        self.radar_points = stored["radar_points"]
+        self.planes = stored["planes"]
+        self.plane_count = stored["plane_count"]
+        self.ciri_success = stored["ciri_success"]
+        self.cloud_count = stored["cloud_count"]
+        self.accumulated = stored["accumulated"]
         self.env_index = stored["env_index"]
         self.split = split
         self.root = root
@@ -239,6 +284,7 @@ class RadarDepthDataset:
             azimuth_fov_deg=float(depth["azimuth_fov_deg"]),
             elevation_fov_deg=float(depth["elevation_fov_deg"]),
             max_range_m=float(depth["max_range_m"]),
+            erosion_voxel_m=float(depth["erosion_voxel_m"]),
             range_noise_m=0.0,
             keep_probability=1.0,
         )
@@ -253,13 +299,16 @@ class RadarDepthDataset:
             self._environments[index] = Occupancy(points, voxel_m=0.4, ground_z=0.0)
         return self._environments[index]
 
-    def sample(self, index: int, augment_seed: int) -> DepthSample:
-        count = int(self.radar_counts[index])
+    def sample(self, index: int, augment_seed: int) -> RadarSample:
+        count = int(self.cloud_count[index])
         velocity, acceleration, goal = augment_state(np.random.default_rng(augment_seed))
-        return DepthSample(
+        return RadarSample(
             self.depth[index].astype(float),
             self.valid[index],
-            self.radar_points[index, :count].astype(float),
+            self.accumulated[index, :count].astype(float),
+            self.planes[index].astype(float),
+            int(self.plane_count[index]),
+            bool(self.ciri_success[index]),
             self.positions[index].astype(float),
             self.rpy[index].astype(float),
             int(self.env_index[index]),

@@ -1,8 +1,8 @@
-"""Sparse forward radar returns, rasterized into the depth image YOPO reads.
+"""Radar sweeps, then depth by accumulation, erosion, and projection.
 
-The depth image is not a depth-camera measurement. Each pixel is the nearest
-forward range of a radar return that projects into it. Pixels with no return
-stay at the maximum range and are marked invalid.
+A single sparse scan is not the depth image. Sweeps are accumulated in one
+frame, isolated occupied voxels are eroded away, and only the surviving points
+are projected into the forward depth raster YOPO reads.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ class RadarDepthConfig:
     azimuth_beams: int = 16
     elevation_beams: int = 4
     min_range_m: float = 0.3
+    erosion_voxel_m: float = 0.35
 
     def __post_init__(self) -> None:
         if self.width % 4 or self.height % 4:
@@ -36,6 +37,8 @@ class RadarDepthConfig:
             raise ValueError("range noise must be non-negative")
         if not 0.0 < self.min_range_m < self.max_range_m:
             raise ValueError("range bounds are inconsistent")
+        if self.erosion_voxel_m <= 0.0:
+            raise ValueError("erosion voxel must be positive")
 
 
 def _beam_directions(config: RadarDepthConfig) -> np.ndarray:
@@ -63,7 +66,7 @@ def radar_points(
     config: RadarDepthConfig,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Radar returns in the body frame. Body +X is the optical axis."""
+    """One radar sweep in the body frame. This cloud is not yet a depth image."""
     directions_body = _beam_directions(config)
     directions_world = directions_body @ rotation_world_from_body.T
     ranges = occupancy.raycast(position, directions_world, config.max_range_m)
@@ -76,17 +79,48 @@ def radar_points(
     return directions_body[hit][keep] * measured[keep, None]
 
 
-def depth_from_radar(points: np.ndarray, config: RadarDepthConfig) -> tuple[np.ndarray, np.ndarray]:
-    """Project body-frame radar points to a forward-range image.
+def accumulate(clouds: list[np.ndarray]) -> np.ndarray:
+    """Stack sweeps that already share one coordinate frame."""
+    usable = [cloud.reshape(-1, 3) for cloud in clouds if len(cloud)]
+    if not usable:
+        return np.zeros((0, 3))
+    return np.vstack(usable)
 
-    Image right is body -Y and image down is body -Z. Depth is the forward
-    coordinate x, in metres.
+
+def erode_occupied(points: np.ndarray, voxel_m: float) -> np.ndarray:
+    """Remove occupied voxels that have no face-adjacent occupied neighbor.
+
+    Accumulation fills a surface. A lone radar return does not, and erosion
+    drops it before projection.
+    """
+    cloud = np.asarray(points, dtype=float).reshape(-1, 3)
+    if len(cloud) == 0:
+        return np.zeros((0, 3))
+    keys = np.floor(cloud / voxel_m).astype(np.int64)
+    occupied = {tuple(int(value) for value in key) for key in keys}
+    faces = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
+    kept = [
+        key
+        for key in occupied
+        if any((key[0] + dx, key[1] + dy, key[2] + dz) in occupied for dx, dy, dz in faces)
+    ]
+    if not kept:
+        return np.zeros((0, 3))
+    return (np.asarray(kept, dtype=float) + 0.5) * voxel_m
+
+
+def project_depth(points: np.ndarray, config: RadarDepthConfig) -> tuple[np.ndarray, np.ndarray]:
+    """Project points to a forward-range image. Nearest forward range wins.
+
+    Image right is body -Y and image down is body -Z. Empty pixels stay at the
+    maximum range and are marked invalid.
     """
     depth = np.full((config.height, config.width), config.max_range_m)
     valid = np.zeros(depth.shape, dtype=bool)
-    if len(points) == 0:
+    cloud = np.asarray(points, dtype=float).reshape(-1, 3)
+    if len(cloud) == 0:
         return depth, valid
-    forward = points[:, 0]
+    forward = cloud[:, 0]
     visible = forward > config.min_range_m
     if not visible.any():
         return depth, valid
@@ -96,8 +130,8 @@ def depth_from_radar(points: np.ndarray, config: RadarDepthConfig) -> tuple[np.n
     focal_y = (config.height / 2) / half_elevation
     center_x = (config.width - 1) / 2
     center_y = (config.height - 1) / 2
-    columns = np.rint(center_x - focal_x * points[visible, 1] / forward[visible]).astype(int)
-    rows = np.rint(center_y - focal_y * points[visible, 2] / forward[visible]).astype(int)
+    columns = np.rint(center_x - focal_x * cloud[visible, 1] / forward[visible]).astype(int)
+    rows = np.rint(center_y - focal_y * cloud[visible, 2] / forward[visible]).astype(int)
     inside = (columns >= 0) & (columns < config.width) & (rows >= 0) & (rows < config.height)
     if not inside.any():
         return depth, valid
@@ -112,3 +146,10 @@ def depth_from_radar(points: np.ndarray, config: RadarDepthConfig) -> tuple[np.n
             depth[row, column] = value
             valid[row, column] = True
     return depth, valid
+
+
+def depth_from_accumulated(
+    points: np.ndarray, config: RadarDepthConfig
+) -> tuple[np.ndarray, np.ndarray]:
+    """Erode an accumulated cloud, then project it. Do not skip the erosion."""
+    return project_depth(erode_occupied(points, config.erosion_voxel_m), config)

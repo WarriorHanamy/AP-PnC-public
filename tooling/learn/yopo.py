@@ -1,9 +1,9 @@
 """Radar-depth YOPO: one forward pass over primitive anchors.
 
 The published YOPO planner reads a depth image and predicts, for each motion
-primitive, an endpoint offset and a score. Here the depth image is the radar
-point-cloud raster from ``radar_depth``. Pretrained depth-camera weights are
-not used and are not shipped.
+primitive, an endpoint offset and a score. Here the depth image is an accumulated radar cloud after erosion and
+projection (``radar_depth.depth_from_accumulated``). Pretrained depth-camera
+weights are not used and are not shipped.
 
 Each primitive emits ten values: endpoint position, velocity and acceleration
 offsets, then a score. The highest score is integrated as a quintic and flown

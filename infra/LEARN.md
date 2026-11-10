@@ -1,37 +1,47 @@
-# Radar-depth data for YOPO
+# Synthetic radar: CIRI for RL, eroded depth for YOPO
 
-The quadrotor plant has no wing-force model. This page is the recorded
-radar-to-depth path used to train YOPO. It follows the same stages as the
-public YOPO collector (`data_collection_simulation.py`): sample poses, save the
-sensor image and the pose, then train from that recording with velocity and
-goal sampled when each item is loaded.
+The quadrotor plant has no wing-force model. Learning starts from synthetic
+radar sweeps. One accumulated cloud feeds two pipelines. The manifest records
+`synthetic: true`.
 
-CIRI is **not** part of this pipeline. Its representation has not been
-specified, so nothing here is a CIRI tensor, a CIRI scene, or a CIRI-to-depth
-conversion. `ap-pnc learn train-rl` stops for that reason.
+```text
+radar sweeps
+    └─ accumulate in the world frame
+         ├─ CIRI  →  h-polytope corridor  →  RL
+         └─ erosion  →  projection  →  depth  →  YOPO
+```
+
+## CIRI
+
+CIRI is Configuration-space Iterative Regional Inflation from SUPER
+(hku-mars/SUPER, Ren et al., Science Robotics 2025). `tooling/learn/ciri.py`
+follows that call: obstacle points, a boundary box, and a seed segment in;
+halfspace rows `[nx, ny, nz, d]` out, with the free set `n·x + d <= 0`.
+Obstacles are inflated by the robot radius, so the polytope is a corridor in
+configuration space. This is the observation the RL policy reads. It is not an
+occupancy cloud and it is not a depth image.
+
+## Depth
+
+Depth is not a raster of one sparse scan. `tooling/learn/radar_depth.py`:
+
+1. Accumulate every sweep so far into one cloud.
+2. Erode it: an occupied voxel is dropped unless a face-adjacent voxel is also
+   occupied, which removes isolated returns and keeps an accumulated surface.
+3. Project the survivors into a 32×24 forward depth image (90° by 40°). The
+   nearest forward range wins. Empty pixels stay at maximum range.
 
 ## What is stored
 
-Each sample is one forward radar sweep and the depth image made directly from
-those points:
-
-- sparse body-frame radar points (16 by 4 beams, 90° by 40°)
-- a 32×24 depth raster (forward range in metres; empty pixels stay at max range)
-- the pose of the sweep
-- the synthetic obstacle points that cast the rays, kept only as the cost map
-  for YOPO's guidance step (the same role as YOPO's saved map)
-
-The obstacle field is a synthetic simulator world. It is not a reconstruction
-and it is not CIRI.
-
 ```text
 $AP_PNC_DIR/.artifacts/learn/datasets/<name>/
-  manifest.json          schema ap-pnc/radar-depth/v1, ciri: unspecified
-  raw/<env>/label.npz    depth, valid mask, poses, radar points
+  manifest.json          schema ap-pnc/radar-accumulated/v1, synthetic: true
+  raw/<env>/label.npz    depth, CIRI planes, accumulated points, poses
   raw/<env>/environment.npy
   packed/train.npz
   packed/val.npz
-  yopo.npz               after training
+  yopo.npz               after train-yopo
+  rl.npz                 after train-rl
   comparison.md          after eval
 ```
 
@@ -46,19 +56,16 @@ uv run --project "$AP_PNC_DIR" ap-pnc learn collect \
 
 DATA="$AP_PNC_DIR/.artifacts/learn/datasets/synthetic-radar"
 uv run --project "$AP_PNC_DIR" ap-pnc learn pack --dataset "$DATA" --seed 0
+uv run --project "$AP_PNC_DIR" ap-pnc learn train-rl --dataset "$DATA" --updates 20
 uv run --project "$AP_PNC_DIR" ap-pnc learn train-yopo --dataset "$DATA" --updates 20
 uv run --project "$AP_PNC_DIR" ap-pnc learn eval --dataset "$DATA"
 ```
 
-`collect` and `pack` only need to be run once for a dataset. Training reads the
-packed depth; it does not raycast again. At each training item the loader
-samples a body velocity, acceleration, and forward goal direction, which is the
-augmentation YOPO applies in `YopoDataset.__getitem__`.
+`collect` and `pack` run once. Training reads the stored planes and the stored
+depth; it does not rebuild them. Each loaded item samples a body velocity,
+acceleration, and forward goal direction.
 
-`ap-pnc learn smoke` runs collect, pack, one YOPO update, and eval on four
-synthetic views.
-
-`ap-pnc learn train-rl` exits with an error. RL was going to consume CIRI, and
-that interface is not defined.
+`ap-pnc learn smoke` runs the chain on four synthetic views with one update
+each.
 
 Author YOPO weights trained on a depth camera are not loaded.
