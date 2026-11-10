@@ -39,10 +39,15 @@ namespace simple_sim
     }
   }
   void NmpcController::set_reference(
-      std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory)
+      std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory,
+      double                                                    now_s)
   {
     if (!trajectory || trajectory->empty())
       throw std::invalid_argument("empty NMPC trajectory update");
+    if (trajectory_ &&
+        trajectory_->duration() < now_s + controller_.config().horizon_s)
+      throw std::logic_error(
+          "reference append would alter the active NMPC horizon");
     trajectory_ = std::move(trajectory);
   }
   void NmpcController::reset(const State &initial)

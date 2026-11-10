@@ -64,8 +64,8 @@ def prepare(scene="ring", rate_tuning="auto"):
         aero="lyu",
         v_max=10.0,
         duration_s=240,
+        controller="nmpc",
         overrides={
-            "simple_sim.controller": "nmpc",
             "problem_formulation.corridor_source": "map_sfc",
             "problem_formulation.cost.time_weight": 10000.0,
             "problem_formulation.cost.vel_weight": 100000.0,

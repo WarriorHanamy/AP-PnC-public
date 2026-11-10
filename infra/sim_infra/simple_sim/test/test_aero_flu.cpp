@@ -36,7 +36,7 @@ int main()
     const std::array<const char *, 5> names{"lyu", "phi", "ma", "advanced",
                                             "none"};
     const std::array<double, 9>       values{-12,  -2,  -.49, -1e-5, 0,
-                                             1e-5, .49, 2,    12};
+                                       1e-5, .49, 2,    12};
     for (std::size_t i = 0; i < names.size(); ++i)
     {
       auto            model = aerodynamics::make_aero(names[i]);
@@ -75,6 +75,18 @@ int main()
         }
         check(rejected, "nonfinite air velocity accepted");
       }
+    }
+    {
+      auto            model = aerodynamics::make_aero("multirotor");
+      Eigen::Vector3d f, m;
+      double          alpha = 0, beta = 0;
+      check(model->getAeroWrench({3, 0, 4}, f, m, alpha, beta),
+            "multirotor drag failed");
+      const double speed = 5.0;
+      check((f - Eigen::Vector3d(-0.03 * speed * 3, 0, -0.03 * speed * 4))
+                    .norm() < 1e-12,
+            "multirotor drag is not -k|v|v");
+      check(m.isZero(0.0), "multirotor drag must not produce a moment");
     }
     std::cout << "PASS 3645 native-FLU angle/wrench cases, fitted polar "
                  "fixtures, invalid inputs\n";

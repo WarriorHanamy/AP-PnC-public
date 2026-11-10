@@ -76,8 +76,7 @@ def prepare(*, controller="nmpc", v_max=4.0, output=None, scene="pillars",
         shutil.copy2(points, job / "scene" / points.name)
     shutil.copy2(profile, job / "profile.yaml")
     shutil.copy2(provenance, job / "upstream-provenance.json")
-    overrides = {"simple_sim.controller": controller,
-                 "simple_sim.ros.publish_stride": 1,
+    overrides = {"simple_sim.ros.publish_stride": 1,
                  "problem_formulation.corridor_source": corridor_source}
     # The default dev circuit is a radius-8 circle. A scene that brings its own
     # planning.yaml (the SUPER waypoint round trip) must not be rewritten into that circle.
@@ -85,7 +84,7 @@ def prepare(*, controller="nmpc", v_max=4.0, output=None, scene="pillars",
         overrides["problem_formulation.basic_traj.radius"] = 8.0
         overrides["problem_formulation.basic_traj.height"] = 3.0
     request = JobRequest(profile="practical", aero="lyu", v_max=v_max, hold_s=2.0,
-                         overrides=overrides)
+                         controller=controller, overrides=overrides)
     request.validate()
     write_configuration(job, request)
     revision = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()

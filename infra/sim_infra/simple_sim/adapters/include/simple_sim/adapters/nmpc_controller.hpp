@@ -6,12 +6,12 @@
 #include <nmpc_controller/tracking_controller.hpp>
 #include <planner_core/trajectory.hpp>
 
-#include "simple_sim/controller.hpp"
+#include "simple_sim/adapters/controllers.hpp"
 
 namespace simple_sim
 {
 
-  class NmpcController final : public Controller
+  class NmpcController final : public TrackingController
   {
    public:
     NmpcController(
@@ -19,10 +19,12 @@ namespace simple_sim
         nmpc::TrackingConfig config, std::filesystem::path trace_file = {});
     // Reference-only update: retain solver warm start and command integration.
     void set_reference(
-        std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory);
-    void          reset(const State &initial) override;
-    ControlResult compute(const StepContext &, const State &,
-                          const Feedback &) override;
+        std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory,
+        double now_s) override;
+    std::optional<int> solver_abi() const override { return NMPC_SOLVER_ABI; }
+    void               reset(const State &initial) override;
+    ControlResult      compute(const StepContext &, const State &,
+                               const Feedback &) override;
 
    private:
     std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory_;

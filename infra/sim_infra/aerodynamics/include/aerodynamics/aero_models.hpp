@@ -23,13 +23,15 @@ namespace aerodynamics
     std::string_view note;
   };
 
-  inline constexpr std::array<AeroModelEntry, 5> kAeroModels{{
+  inline constexpr std::array<AeroModelEntry, 6> kAeroModels{{
       {"lyu", ValidationStatus::kUnderTest, "Zhang-Lyu"},
       {"phi", ValidationStatus::kUnderTest, "phi quadratic form"},
       {"ma", ValidationStatus::kNotTested,
        "B-spline table lookup; excluded from the campaign"},
       {"advanced", ValidationStatus::kNotTested,
        "advanced lift/drag; excluded from the campaign"},
+      {"multirotor", ValidationStatus::kUnderTest,
+       "isotropic quadratic drag, no wing and no moment"},
       {"none", ValidationStatus::kNullControl, "zero wrench control baseline"},
   }};
 

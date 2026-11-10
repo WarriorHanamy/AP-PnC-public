@@ -31,11 +31,12 @@ namespace aerodynamics
    *   "lyu"      Zhang-Lyu MATLAB-generated model
    *   "phi"      linear phi-theory model
    *   "ma"       B-spline fitted model (BsplineAerodynamics)
-   *   "advanced" advanced lift-drag model (stall effects)
-   *   "none"     null model (zero wrench)
+   *   "advanced"   advanced lift-drag model (stall effects)
+   *   "multirotor" isotropic quadratic drag, no wing
+   *   "none"       null model (zero wrench)
    */
-  inline constexpr std::string_view kAeroModelNames[] = {"lyu", "phi", "ma",
-                                                         "advanced", "none"};
+  inline constexpr std::string_view kAeroModelNames[] = {
+      "lyu", "phi", "ma", "advanced", "multirotor", "none"};
 
   /**
    * @brief Create an aerodynamics model by canonical name

@@ -15,9 +15,6 @@
 #include <stdexcept>
 
 #include "simple_sim/rate_loop.hpp"
-#ifdef SIMPLE_SIM_WITH_NMPC
-#include "simple_sim/adapters/nmpc_controller.hpp"
-#endif
 
 namespace simple_sim
 {
@@ -314,39 +311,18 @@ namespace simple_sim
               : config_.aero.inject_thrust_axis == 1;
       const bool zero_thrust_axis_aero = !inject_thrust_axis_aero;
       const auto aero_model = aerodynamics::make_aero(config_.aero_model);
-      if (config_.controller == "se3")
-      {
-        controller_ = std::make_unique<Se3Controller>(
-            trajectory_, config_.plant.gravity, config_.se3, aero_model,
-            config_.plant.mass, zero_thrust_axis_aero, config_.aero);
-      }
-#ifdef SIMPLE_SIM_WITH_NMPC
-      else
-      {
-        nmpc::TrackingConfig tracking_config;
-        tracking_config.horizon_s  = nmpc_settings["horizon_s"].as<double>();
-        tracking_config.traj_res_s = nmpc_settings["traj_res_s"].as<double>();
-        tracking_config.ctrl_frq   = nmpc_settings["ctrl_frq"].as<double>();
-        tracking_config.initial_specific_thrust =
-            nmpc_settings["initial_specific_thrust"].as<double>();
-        tracking_config.cx_alpha_slope =
-            nmpc_settings["cx_alpha_slope"].as<double>();
-        tracking_config.cx_slope_estimation =
-            nmpc_settings["cx_slope_estimation"].as<bool>();
-        tracking_config.cx_slope_forgetting =
-            nmpc_settings["cx_slope_forgetting"].as<double>();
-        tracking_config.cx_slope_limit =
-            nmpc_settings["cx_slope_limit"].as<double>();
-        tracking_config.cx_slope_covariance_limit =
-            nmpc_settings["cx_slope_covariance_limit"].as<double>();
-        tracking_config.cx_slope_min_excitation =
-            nmpc_settings["cx_slope_min_excitation"].as<double>();
-        tracking_config.cx_slope_lag_s =
-            nmpc_settings["cx_slope_lag_s"].as<double>();
-        controller_ = std::make_unique<NmpcController>(
-            trajectory_, tracking_config, output_dir_ / "nmpc_reference.csv");
-      }
-#endif
+      ControllerSelection selection;
+      selection.backend               = config_.controller;
+      selection.trajectory            = trajectory_;
+      selection.gravity               = config_.plant.gravity;
+      selection.mass                  = config_.plant.mass;
+      selection.se3                   = config_.se3;
+      selection.zero_thrust_axis_aero = zero_thrust_axis_aero;
+      selection.aero                  = config_.aero;
+      selection.aero_model            = aero_model;
+      selection.nmpc_yaml             = config_.nmpc_yaml;
+      selection.trace_file            = output_dir_ / "nmpc_reference.csv";
+      controller_                     = make_controller(selection);
       // Any canonical model ("none" resolves to the null model, wrench = 0)
       ForceModel aero = tailsitter_aero(aero_model, config_.aero);
       if (zero_thrust_axis_aero)
@@ -527,11 +503,8 @@ namespace simple_sim
   void Experiment::append_reference(
       const planner::core::ReferenceTrajectory &tail)
   {
-#ifdef SIMPLE_SIM_WITH_NMPC
-    auto *controller = dynamic_cast<NmpcController *>(controller_.get());
-    if (!controller || tail.empty() || finished_)
-      throw std::logic_error(
-          "reference append requires an active NMPC experiment");
+    if (!controller_ || tail.empty() || finished_)
+      throw std::logic_error("reference append requires an active controller");
     if (!std::isfinite(tail.duration()) || tail.duration() <= 0.0)
       throw std::invalid_argument("reference append has invalid duration");
     for (const auto &piece : tail.representation())
@@ -539,13 +512,9 @@ namespace simple_sim
           !piece.getCoeffMat().allFinite())
         throw std::invalid_argument(
             "reference append has non-finite coefficients");
-    const auto   settings = YAML::LoadFile(config_.nmpc_yaml.string())["nmpc"];
-    const double now      = static_cast<double>(runner_->time_ns()) * 1e-9;
-    if (trajectory_->duration() < now + settings["horizon_s"].as<double>())
-      throw std::logic_error(
-          "reference append would alter the active NMPC horizon");
-    const auto end   = trajectory_->sample(trajectory_->duration());
-    const auto start = tail.sample(0.0);
+    const double now   = static_cast<double>(runner_->time_ns()) * 1e-9;
+    const auto   end   = trajectory_->sample(trajectory_->duration());
+    const auto   start = tail.sample(0.0);
     if ((end.p - start.p).norm() > 1e-5 || (end.v - start.v).norm() > 1e-5 ||
         (end.a - start.a).norm() > 1e-4)
       throw std::invalid_argument("reference append must be C2 continuous");
@@ -553,9 +522,11 @@ namespace simple_sim
     joined.append(tail.representation());
     auto updated = std::make_shared<const planner::core::ReferenceTrajectory>(
         std::move(joined));
-    // Save the exact coefficients before exposing them to the control loop.
+    // The backend may reject the append (the NMPC horizon must stay covered).
+    // That rejection happens before the saved reference changes.
     auto previous = trajectory_;
-    trajectory_   = updated;
+    controller_->set_reference(updated, now);
+    trajectory_ = updated;
     try
     {
       save_reference();
@@ -563,13 +534,9 @@ namespace simple_sim
     catch (...)
     {
       trajectory_ = previous;
+      controller_->set_reference(previous, now);
       throw;
     }
-    controller->set_reference(std::move(updated));
-#else
-    (void)tail;
-    throw std::logic_error("reference append requires NMPC support");
-#endif
   }
 
   Experiment::~Experiment()
@@ -694,20 +661,20 @@ namespace simple_sim
         << ",\n  \"aero_model\": " << json_string(config_.aero_model)
         << ",\n  \"thrust_realization\": "
         << json_string(config_.throttle.realization)
-        << ",\n  \"aero_validation\": " << json_string(config_.aero_validation)
-#ifdef SIMPLE_SIM_WITH_NMPC
-        << ",\n  \"nmpc_solver_abi\": " << NMPC_SOLVER_ABI
-#endif
-        << ",\n  \"integrator\": \"rk4\",\n  \"physics_dt_ns\": "
-        << config_.physics_dt_ns << ",\n  \"control_dt_ns\": "
-        << (runner_ ? runner_->control_dt_ns() : 0)
-        << ",\n  \"reference_terminal_policy\": \"hold_last_point\""
-        << ",\n  \"terminal_hold_s\": " << config_.terminal_hold_s
-        << ",\n  \"trajectory_duration_s\": "
-        << (trajectory_ ? trajectory_->duration() : 0.0)
-        << ",\n  \"committed_steps\": " << (runner_ ? runner_->index() : 0)
-        << ",\n  \"time_ns\": " << (runner_ ? runner_->time_ns() : 0)
-        << ",\n  \"stochastic_model\": false\n}\n";
+        << ",\n  \"aero_validation\": " << json_string(config_.aero_validation);
+    if (controller_)
+      if (const auto abi = controller_->solver_abi())
+        manifest << ",\n  \"nmpc_solver_abi\": " << *abi;
+    manifest << ",\n  \"integrator\": \"rk4\",\n  \"physics_dt_ns\": "
+             << config_.physics_dt_ns << ",\n  \"control_dt_ns\": "
+             << (runner_ ? runner_->control_dt_ns() : 0)
+             << ",\n  \"reference_terminal_policy\": \"hold_last_point\""
+             << ",\n  \"terminal_hold_s\": " << config_.terminal_hold_s
+             << ",\n  \"trajectory_duration_s\": "
+             << (trajectory_ ? trajectory_->duration() : 0.0)
+             << ",\n  \"committed_steps\": " << (runner_ ? runner_->index() : 0)
+             << ",\n  \"time_ns\": " << (runner_ ? runner_->time_ns() : 0)
+             << ",\n  \"stochastic_model\": false\n}\n";
     manifest.close();
     fs::rename(output_dir_ / "manifest.json.tmp",
                output_dir_ / "manifest.json");

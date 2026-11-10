@@ -46,7 +46,7 @@ namespace simple_sim
     RuntimeConfig                                             config_;
     std::filesystem::path                                     output_dir_;
     std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory_;
-    std::unique_ptr<Controller>                               controller_;
+    std::unique_ptr<TrackingController>                       controller_;
     std::unique_ptr<Runner>                                   runner_;
     std::ofstream                                             log_;
     double squared_position_error_ = 0.0;

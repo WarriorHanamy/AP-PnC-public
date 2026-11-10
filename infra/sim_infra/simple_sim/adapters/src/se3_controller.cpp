@@ -164,6 +164,14 @@ namespace simple_sim
       if (!v->allFinite() || (v->array() <= 0.0).any())
         throw std::invalid_argument("SE3 gains must be finite and positive");
   }
+  void Se3Controller::set_reference(
+      std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory,
+      double)
+  {
+    if (!trajectory || trajectory->empty())
+      throw std::invalid_argument("empty SE3 trajectory update");
+    trajectory_ = std::move(trajectory);
+  }
   void Se3Controller::reset(const State &initial)
   {
     validate_state(initial);

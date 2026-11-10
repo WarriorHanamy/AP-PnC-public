@@ -35,7 +35,8 @@ from tooling.env import artifact_path, get_git_root, project_path, setup_env
 
 #: Canonical aerodynamic models the driver accepts; the validation status of each
 #: lives in aerodynamics/aero_models.hpp and "configured" leaves the yaml alone.
-AERO_MODELS: Final = ("configured", "none", "lyu", "phi")
+AERO_MODELS: Final = ("configured", "none", "lyu", "phi", "multirotor")
+CONTROLLERS: Final = ("se3", "nmpc")
 PROFILES: Final = ("ideal", "practical")
 
 _STACK_DIR: Final = "infra/sim_infra/simple_sim/stack"
@@ -76,6 +77,8 @@ class JobRequest:
     mass_kg: float | None = None
     duration_s: float = 0.0
     point_cloud: Path | None = None
+    #: se3 or nmpc. None leaves the yaml value, including a value set in overrides.
+    controller: str | None = None
 
     #: Dotted yaml overrides applied to the job's own configuration copy, keyed by
     #: the document root ("simple_sim.controller", "problem_formulation.cost.v_max",
@@ -87,6 +90,8 @@ class JobRequest:
             raise ValueError(f"profile must be one of {PROFILES}, got {self.profile!r}")
         if self.aero not in AERO_MODELS:
             raise ValueError(f"aero must be one of {AERO_MODELS}, got {self.aero!r}")
+        if self.controller is not None and self.controller not in CONTROLLERS:
+            raise ValueError(f"controller must be one of {CONTROLLERS}, got {self.controller!r}")
         for name, value in (
             ("duration_s", self.duration_s),
             ("hold_s", self.hold_s),
@@ -219,6 +224,9 @@ def write_configuration(job: Path, request: JobRequest) -> None:
         for key in keys[1:-1]:
             node = node[key]
         node[keys[-1]] = value
+
+    if request.controller is not None:
+        simple_sim["simple_sim"]["controller"] = request.controller
 
     (config_dir / "simple_sim.yaml").write_text(yaml.safe_dump(simple_sim, sort_keys=False))
     planning_path.write_text(yaml.safe_dump(planning, sort_keys=False))

@@ -1,0 +1,6 @@
+# Simple multirotor drag. Not a tailsitter wing model.
+# Body FLU, thrust along +Z. Force is -drag_kg_per_m * |v| * v through the
+# centre of mass. No lift and no aerodynamic moment.
+# At 12 m/s and 0.03 kg/m the force magnitude is 4.32 N.
+body_frame: FLU
+drag_kg_per_m: 0.03
