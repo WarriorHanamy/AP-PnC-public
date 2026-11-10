@@ -1,9 +1,10 @@
 # AP-PnC
 
 Quadrotor trajectory generation and tracking. Planning and NMPC for a
-multirotor: collective thrust along body +Z, no wing-force model. A later phase
-may compare reinforcement learning with radar-point-cloud-to-depth YOPO on
-post-CIRI scenes; that pipeline is not in this tree.
+multirotor: collective thrust along body +Z, no wing-force model. Post-CIRI
+reinforcement learning and a radar-point-cloud-to-depth YOPO baseline are
+documented in [infra/LEARN.md](infra/LEARN.md). CIRI reconstructions are not
+shipped with this checkout.
 
 ## Quick start
 

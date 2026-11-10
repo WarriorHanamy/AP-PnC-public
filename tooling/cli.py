@@ -7,6 +7,7 @@ from tooling.commands import (
     build,
     dev_sim,
     gen_nmpc_lib,
+    learn,
     lint,
     test,
 )
@@ -21,6 +22,11 @@ app.add_typer(test.app, name="test", help="Test runners (pytest, colcon)")
 app.add_typer(build.app, name="build", help="C++ colcon builds")
 app.add_typer(lint.app, name="lint", help="Lint and format")
 app.add_typer(dev_sim.app, name="dev-sim", help="ROS2 pillar/LiDAR development simulation")
+app.add_typer(
+    learn.app,
+    name="learn",
+    help="Post-CIRI quadrotor RL versus radar-depth YOPO",
+)
 
 
 def main() -> None:
@@ -34,6 +40,7 @@ def main() -> None:
         "test",
         "build",
         "lint",
+        "learn",
     }
     command = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in commands else "ap-pnc"
     with session(), operation("cli.command", {"ap.pnc.command": command}):

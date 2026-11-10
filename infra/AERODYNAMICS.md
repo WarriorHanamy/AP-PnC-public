@@ -9,6 +9,5 @@ The NMPC state is position, velocity, body-rate command, attitude, and specific
 thrust. Regenerating the solver (`ap-pnc gen-nmpc-lib`) is required after this
 model change because the generated bundle is statically linked.
 
-A later phase may compare reinforcement-learning training with a
-radar-point-cloud-to-depth YOPO policy on post-CIRI scenes. That pipeline is
-not in this tree.
+Post-CIRI reinforcement learning and the radar-depth YOPO baseline are
+documented in [LEARN.md](LEARN.md). CIRI reconstructions are not in this tree.
