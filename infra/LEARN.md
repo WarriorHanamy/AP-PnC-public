@@ -1,87 +1,64 @@
-# Post-CIRI learning: quadrotor RL and radar-depth YOPO
+# Radar-depth data for YOPO
 
-The vehicle is the quadrotor plant (thrust along body +Z). This page is the
-training and comparison entry point. It does not restore wing-force models.
+The quadrotor plant has no wing-force model. This page is the recorded
+radar-to-depth path used to train YOPO. It follows the same stages as the
+public YOPO collector (`data_collection_simulation.py`): sample poses, save the
+sensor image and the pose, then train from that recording with velocity and
+goal sampled when each item is loaded.
 
-YOPO's input is a depth image **rasterized from a sparse forward radar point
-cloud**. A depth camera is not the baseline. The published YOPO weights, which
-were trained on depth-camera images, are not used.
+CIRI is **not** part of this pipeline. Its representation has not been
+specified, so nothing here is a CIRI tensor, a CIRI scene, or a CIRI-to-depth
+conversion. `ap-pnc learn train-rl` stops for that reason.
 
-## Where post-CIRI scenes come from
+## What is stored
 
-This checkout does not contain CIRI reconstructions. A search of the tracked
-tree for `CIRI` / `ciri` finds no scene files, configs, or loaders. The shipped
-perception scenes are different:
+Each sample is one forward radar sweep and the depth image made directly from
+those points:
 
-- `infra/sim_infra/lidar_sim` pillars, and an optional XYZ PLY for the lidar node
-- the MatrixCity / CityGaussian road used by the 3DGS demo
-  ([start guide](CITY_DEMO_START.md))
+- sparse body-frame radar points (16 by 4 beams, 90° by 40°)
+- a 32×24 depth raster (forward range in metres; empty pixels stay at max range)
+- the pose of the sweep
+- the synthetic obstacle points that cast the rays, kept only as the cost map
+  for YOPO's guidance step (the same role as YOPO's saved map)
 
-Those are not post-CIRI scenes. Do not rename them to CIRI.
-
-Prepare one directory per reconstruction, anywhere you keep data, and pass its
-**absolute** path:
+The obstacle field is a synthetic simulator world. It is not a reconstruction
+and it is not CIRI.
 
 ```text
-<scene-dir>/scene.yaml
-<scene-dir>/occupancy.ply
+$AP_PNC_DIR/.artifacts/learn/datasets/<name>/
+  manifest.json          schema ap-pnc/radar-depth/v1, ciri: unspecified
+  raw/<env>/label.npz    depth, valid mask, poses, radar points
+  raw/<env>/environment.npy
+  packed/train.npz
+  packed/val.npz
+  yopo.npz               after training
+  comparison.md          after eval
 ```
-
-`scene.yaml`:
-
-```yaml
-source: post-ciri
-name: block-a
-occupancy: occupancy.ply
-voxel_m: 0.4
-ground_z: 0.0
-start: [0.0, 0.0, 1.5]
-goal: [12.0, 0.0, 1.5]
-```
-
-`source` must be the string `post-ciri`. `occupancy.ply` is an ENU XYZ cloud in
-metres produced by your CIRI pipeline (ASCII or binary little-endian). The
-occupancy path has to stay inside the scene directory. `start` must not lie in
-occupied space.
-
-If that directory is missing, `train-rl`, `train-yopo`, and `eval` stop. They
-will not synthesize a CIRI scene.
 
 ## Commands
-
-From the checkout, with `AP_PNC_DIR` set to the absolute root:
 
 ```bash
 export AP_PNC_DIR=/absolute/path/to/AP-PnC
 uv sync --project "$AP_PNC_DIR"
 
-SCENE=/absolute/path/to/block-a
-uv run --project "$AP_PNC_DIR" ap-pnc learn train-rl --scene "$SCENE" --updates 20
-uv run --project "$AP_PNC_DIR" ap-pnc learn train-yopo --scene "$SCENE" --updates 20
-uv run --project "$AP_PNC_DIR" ap-pnc learn eval --scene "$SCENE" --episodes 5
+uv run --project "$AP_PNC_DIR" ap-pnc learn collect \
+  --name synthetic-radar --envs 2 --samples 16 --seed 0
+
+DATA="$AP_PNC_DIR/.artifacts/learn/datasets/synthetic-radar"
+uv run --project "$AP_PNC_DIR" ap-pnc learn pack --dataset "$DATA" --seed 0
+uv run --project "$AP_PNC_DIR" ap-pnc learn train-yopo --dataset "$DATA" --updates 20
+uv run --project "$AP_PNC_DIR" ap-pnc learn eval --dataset "$DATA"
 ```
 
-Weights and the comparison are written under
-`$AP_PNC_DIR/.artifacts/learn/<scene name>/`:
+`collect` and `pack` only need to be run once for a dataset. Training reads the
+packed depth; it does not raycast again. At each training item the loader
+samples a body velocity, acceleration, and forward goal direction, which is the
+augmentation YOPO applies in `YopoDataset.__getitem__`.
 
-- `rl.npz` — on-policy quadrotor actor-critic
-- `yopo.npz` — radar-depth YOPO
-- `comparison.md` and `comparison.json`
+`ap-pnc learn smoke` runs collect, pack, one YOPO update, and eval on four
+synthetic views.
 
-Both policies observe the same radar raster (32×24 forward range, 90°×40°).
-The RL action is collective specific thrust and body rates on a reduced
-quadrotor (body +Z thrust). YOPO predicts a scored set of quintic primitives
-and the quadrotor tracks the selected primitive. This learning quadrotor is
-not the acados NMPC; regenerate that solver separately when you need it.
+`ap-pnc learn train-rl` exits with an error. RL was going to consume CIRI, and
+that interface is not defined.
 
-`ap-pnc learn smoke` runs a few updates on a synthetic corridor and writes
-`$AP_PNC_DIR/.artifacts/learn/smoke-<seed>/`. The report says
-`scene_source: synthetic-smoke` and is not a CIRI result. Use it to check that
-the install can train and compare. Use `train-rl`, `train-yopo`, and `eval`
-for a real post-CIRI scene.
-
-## What is not included
-
-- CIRI point clouds, labels, or a downloader
-- The authors' YOPO ResNet weights (they expect a depth camera)
-- A claim that a short numpy training run matches a paper result
+Author YOPO weights trained on a depth camera are not loaded.

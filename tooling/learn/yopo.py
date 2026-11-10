@@ -189,6 +189,21 @@ def guidance_step(
     return float(costs[selected])
 
 
+def selected_primitive_cost(
+    net: ReluMlp,
+    features: np.ndarray,
+    state: QuadrotorState,
+    goal: np.ndarray,
+    occupancy: Occupancy,
+    config: RadarDepthConfig,
+) -> float:
+    """Cost of the highest-scoring primitive. Does not update the network."""
+    prediction, _cache = net.forward(features)
+    blocks = prediction.reshape(PRIMITIVE_COUNT, OUTPUTS_PER_PRIMITIVE)
+    selected = int(np.argmax(blocks[:, 9]))
+    return _primitive_cost(state, blocks[selected, :9], anchors(config)[selected], goal, occupancy)
+
+
 def plan_acceleration(
     net: ReluMlp,
     features: np.ndarray,

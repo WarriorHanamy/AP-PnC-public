@@ -1,68 +1,89 @@
-"""CLI for post-CIRI quadrotor RL and radar-depth YOPO."""
+"""Radar-to-depth collection and YOPO training.
+
+CIRI is not part of this command group. ``train-rl`` stops because that policy
+was supposed to read CIRI, and the CIRI interface has not been specified.
+"""
 
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from tooling.learn.ciri import CiriUnavailable
+from tooling.learn.dataset import collect_dataset, pack_dataset
 from tooling.learn.pipeline import evaluate, smoke as run_smoke, train_rl, train_yopo
-from tooling.learn.scenes import load_post_ciri_scene
 
 app = typer.Typer(
     no_args_is_help=True,
-    help=(
-        "Train a quadrotor RL policy and a radar-depth YOPO baseline on a "
-        "post-CIRI occupancy scene, then compare them."
-    ),
+    help="Collect radar depth, pack a train/val set, and train YOPO. CIRI is unfinished.",
 )
 
 
-def _scene(path: Path):
+def _dataset(path: Path) -> Path:
     if not path.is_absolute():
-        typer.echo("scene directory must be absolute", err=True)
+        typer.echo("dataset directory must be absolute", err=True)
         raise typer.Exit(2)
-    try:
-        return load_post_ciri_scene(path)
-    except (OSError, ValueError) as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(2) from error
+    return path
 
 
-@app.command("train-rl")
-def train_rl_command(
-    scene: Annotated[Path, typer.Option("--scene", help="Absolute post-CIRI scene directory")],
-    updates: Annotated[int, typer.Option(min=1)] = 20,
+@app.command()
+def collect(
+    name: Annotated[
+        str, typer.Option(help="Dataset folder name under .artifacts/learn/datasets")
+    ] = "synthetic-radar",
+    envs: Annotated[int, typer.Option(min=1)] = 2,
+    samples: Annotated[int, typer.Option(min=2)] = 16,
     seed: int = 0,
 ) -> None:
-    """Train the on-policy quadrotor policy. Weights go under .artifacts/learn/."""
-    loaded = _scene(scene)
-    path = train_rl(loaded, updates, seed)
+    """Simulate radar at random poses and store each cloud with its depth raster."""
+    path = collect_dataset(name, envs=envs, samples_per_env=samples, seed=seed)
+    typer.echo(path)
+
+
+@app.command()
+def pack(
+    dataset: Annotated[Path, typer.Option("--dataset", help="Absolute dataset directory")],
+    seed: int = 0,
+) -> None:
+    """Shuffle recorded views into packed/train.npz and packed/val.npz."""
+    path = pack_dataset(_dataset(dataset), seed=seed)
     typer.echo(path)
 
 
 @app.command("train-yopo")
 def train_yopo_command(
-    scene: Annotated[Path, typer.Option("--scene", help="Absolute post-CIRI scene directory")],
+    dataset: Annotated[Path, typer.Option("--dataset", help="Absolute packed dataset directory")],
     updates: Annotated[int, typer.Option(min=1)] = 20,
     seed: int = 0,
 ) -> None:
-    """Train YOPO on depth rasterized from the forward radar point cloud."""
-    loaded = _scene(scene)
-    path = train_yopo(loaded, updates, seed)
+    """Train YOPO on stored radar-depth views. Depth is not rendered again."""
+    path = train_yopo(_dataset(dataset), updates, seed)
     typer.echo(path)
+
+
+@app.command("train-rl")
+def train_rl_command(
+    dataset: Annotated[Path, typer.Option("--dataset", help="Absolute dataset directory")],
+    updates: Annotated[int, typer.Option(min=1)] = 20,
+    seed: int = 0,
+) -> None:
+    """Refuse to train RL until a CIRI observation interface is specified."""
+    try:
+        train_rl(_dataset(dataset), updates, seed)
+    except CiriUnavailable as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(2) from error
 
 
 @app.command("eval")
 def eval_command(
-    scene: Annotated[Path, typer.Option("--scene", help="Absolute post-CIRI scene directory")],
-    episodes: Annotated[int, typer.Option(min=1)] = 5,
+    dataset: Annotated[Path, typer.Option("--dataset", help="Absolute dataset directory")],
     seed: int = 0,
 ) -> None:
-    """Roll out the saved RL and YOPO weights and write comparison.md."""
-    loaded = _scene(scene)
+    """Score the saved YOPO weights on the validation split."""
     try:
-        directory = evaluate(loaded, episodes, seed)
-    except FileNotFoundError as error:
+        directory = evaluate(_dataset(dataset), seed)
+    except (OSError, ValueError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(2) from error
     typer.echo(directory / "comparison.md")
@@ -70,6 +91,6 @@ def eval_command(
 
 @app.command("smoke")
 def smoke_command(seed: int = 0) -> None:
-    """Exercise RL and YOPO on a synthetic room. The report is not a CIRI result."""
+    """Collect, pack, and train YOPO on a tiny synthetic radar set."""
     directory = run_smoke(seed)
     typer.echo(directory / "comparison.md")

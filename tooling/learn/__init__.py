@@ -1,6 +1,5 @@
-"""Quadrotor RL and radar-depth YOPO for post-CIRI scenes.
+"""Radar-to-depth collection for YOPO.
 
-CIRI reconstructions are not shipped. ``tooling.learn.scenes`` loads a scene
-directory the caller supplies. ``tooling.learn.pipeline.smoke`` checks the
-algorithms on an explicitly synthetic room and records that it is not CIRI.
+CIRI is not defined here. ``tooling.learn.ciri.require_ciri`` is the unfinished
+hook and always raises.
 """

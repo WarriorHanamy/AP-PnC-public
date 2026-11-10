@@ -8,24 +8,24 @@ from pathlib import Path
 
 import numpy as np
 
-from tooling.env import artifact_path
+from tooling.learn.dataset import RadarDepthDataset, collect_dataset, pack_dataset
 from tooling.learn.net import ReluMlp
 from tooling.learn.occupancy import Occupancy
 from tooling.learn.quadrotor import (
     QuadrotorState,
     command_from_acceleration,
+    rotation_world_from_body,
     step,
 )
-from tooling.learn.radar_depth import RadarDepthConfig, depth_from_radar, radar_points
-from tooling.learn.rl import (
-    RL_SIZES,
-    action_to_command,
-    initial_state,
-    policy_update,
-    sample_action,
+from tooling.learn.radar_depth import RadarDepthConfig
+from tooling.learn.rl import action_to_command, initial_state, sample_action
+from tooling.learn.yopo import (
+    YOPO_SIZES,
+    guidance_step,
+    observation,
+    plan_acceleration,
+    selected_primitive_cost,
 )
-from tooling.learn.scenes import PostCiriScene
-from tooling.learn.yopo import YOPO_SIZES, guidance_step, observation, plan_acceleration
 
 DT = 0.1
 CLEARANCE_M = 0.35
@@ -48,7 +48,7 @@ def _sense(
     config: RadarDepthConfig,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    from tooling.learn.quadrotor import rotation_world_from_body
+    from tooling.learn.radar_depth import depth_from_radar, radar_points
 
     rotation = rotation_world_from_body(state.roll, state.pitch, state.yaw)
     points = radar_points(occupancy, state.position, rotation, config, rng)
@@ -132,156 +132,104 @@ def _load_net(path: Path, sizes: tuple[int, ...]) -> ReluMlp:
     return net
 
 
-def _run_directory(name: str) -> Path:
-    directory = artifact_path(f".artifacts/learn/{name}")
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
+def train_rl(dataset: Path, updates: int, seed: int) -> Path:
+    """RL is not trained here. Its observation was specified as CIRI, which is undefined."""
+    del dataset, updates, seed
+    from tooling.learn.ciri import require_ciri
+
+    require_ciri()
+    raise AssertionError("unreachable")
 
 
-def train_rl(scene: PostCiriScene, updates: int, seed: int) -> Path:
+def _state_from_sample(sample) -> tuple[QuadrotorState, np.ndarray]:
+    roll, pitch, yaw = (float(value) for value in sample.rpy)
+    rotation = rotation_world_from_body(roll, pitch, yaw)
+    state = QuadrotorState(
+        sample.position.copy(),
+        rotation @ sample.velocity_body,
+        roll,
+        pitch,
+        yaw,
+    )
+    goal = sample.position + rotation @ (4.0 * sample.goal_direction_body)
+    return state, goal
+
+
+def train_yopo(dataset: Path, updates: int, seed: int) -> Path:
+    """Guidance updates on packed radar-depth views. The depth is not recomputed."""
     if updates < 1:
         raise ValueError("updates must be positive")
-    directory = _run_directory(scene.name)
-    rng = np.random.default_rng(seed)
-    net = ReluMlp(RL_SIZES, rng)
-    config = RadarDepthConfig()
-    for _ in range(updates):
-        _stats, observations, actions, rewards = rollout(
-            "rl", net, scene.occupancy, scene.start, scene.goal, rng, max_steps=30, config=config
-        )
-        policy_update(net, observations, actions, rewards)
-    path = directory / "rl.npz"
-    _save_net(path, net)
-    return path
-
-
-def train_yopo(scene: PostCiriScene, updates: int, seed: int) -> Path:
-    if updates < 1:
-        raise ValueError("updates must be positive")
-    directory = _run_directory(scene.name)
+    split = RadarDepthDataset(dataset, "train")
     rng = np.random.default_rng(seed)
     net = ReluMlp(YOPO_SIZES, rng)
-    config = RadarDepthConfig()
-    state = initial_state(scene.start, scene.goal)
-    for _ in range(updates):
-        features = _sense(scene.occupancy, state, scene.goal, config, rng)
-        guidance_step(net, features, state, scene.goal, scene.occupancy, config)
-    path = directory / "yopo.npz"
+    for step_index in range(updates):
+        sample = split.sample(step_index % len(split), augment_seed=seed + step_index)
+        state, goal = _state_from_sample(sample)
+        features = observation(sample.depth, state, goal, split.config)
+        guidance_step(
+            net,
+            features,
+            state,
+            goal,
+            split.environment(sample.env_index),
+            split.config,
+        )
+    path = split.root / "yopo.npz"
     _save_net(path, net)
     return path
 
 
-def _summarize(episodes: list[EpisodeStats]) -> dict[str, float]:
-    count = len(episodes)
-    return {
-        "episodes": count,
-        "success_rate": sum(item.success for item in episodes) / count,
-        "collision_rate": sum(item.collision for item in episodes) / count,
-        "mean_steps": sum(item.steps for item in episodes) / count,
-        "mean_path_length_m": sum(item.path_length_m for item in episodes) / count,
-        "mean_min_clearance_m": sum(item.min_clearance_m for item in episodes) / count,
-    }
-
-
-def evaluate(scene: PostCiriScene, episodes: int, seed: int) -> Path:
-    if episodes < 1:
-        raise ValueError("episodes must be positive")
-    directory = _run_directory(scene.name)
-    rl_net = _load_net(directory / "rl.npz", RL_SIZES)
-    yopo_net = _load_net(directory / "yopo.npz", YOPO_SIZES)
-    config = RadarDepthConfig(range_noise_m=0.0, keep_probability=1.0)
-    results = {}
-    for name, net in (("rl", rl_net), ("yopo_radar_depth", yopo_net)):
-        policy = "rl" if name == "rl" else "yopo"
-        stats = [
-            rollout(
-                policy,
+def evaluate(dataset: Path, seed: int) -> Path:
+    """Score YOPO on the packed validation views. RL is reported as unfinished."""
+    split = RadarDepthDataset(dataset, "val")
+    net = _load_net(split.root / "yopo.npz", YOPO_SIZES)
+    costs = []
+    for index in range(len(split)):
+        sample = split.sample(index, augment_seed=seed + index)
+        state, goal = _state_from_sample(sample)
+        features = observation(sample.depth, state, goal, split.config)
+        costs.append(
+            selected_primitive_cost(
                 net,
-                scene.occupancy,
-                scene.start,
-                scene.goal,
-                np.random.default_rng(seed + index),
-                max_steps=40,
-                config=config,
-            )[0]
-            for index in range(episodes)
-        ]
-        results[name] = _summarize(stats)
+                features,
+                state,
+                goal,
+                split.environment(sample.env_index),
+                split.config,
+            )
+        )
     report = {
-        "scene_source": "post-ciri",
-        "not_ciri": False,
-        "scene": scene.name,
-        "policies": results,
-        "yopo_input": "depth rasterized from a sparse forward radar point cloud",
+        "schema": "ap-pnc/radar-depth-eval/v1",
+        "ciri": "unfinished",
+        "dataset": str(split.root),
+        "yopo_input": "stored depth rasterized from the recorded radar point cloud",
+        "val_views": len(split),
+        "yopo_mean_primitive_cost": float(np.mean(costs)),
+        "rl": "not run; CIRI observation interface is unspecified",
     }
-    return _write_report(directory, report)
+    return _write_report(split.root, report)
 
 
 def _write_report(directory: Path, report: dict) -> Path:
     (directory / "comparison.json").write_text(json.dumps(report, indent=2))
     lines = [
-        f"# {report['scene']}",
+        "# Radar-depth YOPO",
         "",
-        f"scene_source: {report['scene_source']}",
+        "CIRI is unfinished. This comparison does not use a CIRI representation.",
         "",
-        "| policy | success | collision | mean steps | path length m | min clearance m |",
-        "|---|---:|---:|---:|---:|---:|",
+        f"validation views: {report['val_views']}",
+        f"YOPO mean primitive cost: {report['yopo_mean_primitive_cost']:.4f}",
+        f"RL: {report['rl']}",
+        "",
     ]
-    for name, stats in report["policies"].items():
-        lines.append(
-            f"| {name} | {stats['success_rate']:.2f} | {stats['collision_rate']:.2f} | "
-            f"{stats['mean_steps']:.1f} | {stats['mean_path_length_m']:.2f} | "
-            f"{stats['mean_min_clearance_m']:.2f} |"
-        )
-    if report["not_ciri"]:
-        lines.extend(["", "This run is not a post-CIRI result."])
-    (directory / "comparison.md").write_text("\n".join(lines) + "\n")
+    (directory / "comparison.md").write_text("\n".join(lines))
     return directory
 
 
-def synthetic_room() -> tuple[Occupancy, np.ndarray, np.ndarray]:
-    """A box corridor used only to exercise the code. It is not a CIRI scene."""
-    xs = np.linspace(0.0, 6.0, 13)
-    left = np.column_stack((xs, np.full_like(xs, 1.2), np.full_like(xs, 1.0)))
-    right = np.column_stack((xs, np.full_like(xs, -1.2), np.full_like(xs, 1.0)))
-    gate = np.column_stack((np.full(5, 3.0), np.linspace(-0.8, 0.8, 5), np.full(5, 1.0)))
-    points = np.vstack((left, right, gate))
-    start = np.array([0.4, 0.0, 1.0])
-    goal = np.array([5.5, 0.0, 1.0])
-    return Occupancy(points, voxel_m=0.4, ground_z=0.0), start, goal
-
-
 def smoke(seed: int = 0) -> Path:
-    """Run a few RL and YOPO updates on the synthetic room and write a report."""
-    occupancy, start, goal = synthetic_room()
-    rng = np.random.default_rng(seed)
-    config = RadarDepthConfig(range_noise_m=0.0, keep_probability=1.0)
-    rl_net = ReluMlp(RL_SIZES, rng)
-    yopo_net = ReluMlp(YOPO_SIZES, np.random.default_rng(seed + 1))
-    state = initial_state(start, goal)
-    for _ in range(2):
-        stats, observations, actions, rewards = rollout(
-            "rl", rl_net, occupancy, start, goal, rng, max_steps=8, config=config
-        )
-        policy_update(rl_net, observations, actions, rewards)
-        del stats
-        features = _sense(occupancy, state, goal, config, rng)
-        guidance_step(yopo_net, features, state, goal, occupancy, config)
-    results = {}
-    for name, net, policy in (
-        ("rl", rl_net, "rl"),
-        ("yopo_radar_depth", yopo_net, "yopo"),
-    ):
-        episode = rollout(
-            policy, net, occupancy, start, goal, np.random.default_rng(seed + 3), 8, config
-        )[0]
-        results[name] = _summarize([episode])
-    directory = _run_directory(f"smoke-{seed}")
-    report = {
-        "scene_source": "synthetic-smoke",
-        "not_ciri": True,
-        "scene": "synthetic-room",
-        "policies": results,
-        "yopo_input": "depth rasterized from a sparse forward radar point cloud",
-    }
-    return _write_report(directory, report)
+    """Collect a tiny synthetic radar-depth set, pack it, and train YOPO for one step."""
+    name = f"smoke-{seed}"
+    root = collect_dataset(name, envs=1, samples_per_env=4, seed=seed)
+    pack_dataset(root, seed=seed)
+    train_yopo(root, updates=1, seed=seed)
+    return evaluate(root, seed=seed)
