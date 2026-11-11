@@ -49,6 +49,10 @@ namespace simple_sim
       tracking.cx_slope_min_excitation =
           nmpc["cx_slope_min_excitation"].as<double>();
       tracking.cx_slope_lag_s = nmpc["cx_slope_lag_s"].as<double>();
+      tracking.yb_hold_speed_m_s =
+          nmpc["yb_hold_speed_m_s"].as<double>(tracking.yb_hold_speed_m_s);
+      tracking.yb_slew_rad_s =
+          nmpc["yb_slew_rad_s"].as<double>(tracking.yb_slew_rad_s);
       return std::make_unique<NmpcController>(selection.trajectory, tracking,
                                               selection.trace_file);
 #endif

@@ -47,6 +47,8 @@ def load_nmpc_settings(path: Path | None = None) -> dict:
         "cx_slope_covariance_limit",
         "cx_slope_min_excitation",
         "cx_slope_lag_s",
+        "yb_hold_speed_m_s",
+        "yb_slew_rad_s",
     }
     if set(settings) != required | runtime:
         raise ValueError("missing or unsupported NMPC settings keys")
@@ -68,6 +70,11 @@ def load_nmpc_settings(path: Path | None = None) -> dict:
         raise ValueError("NMPC horizon must contain an integer number of intervals")
     if round(ratio) < 1:
         raise ValueError("NMPC horizon must contain at least one interval")
+    for name in ("yb_hold_speed_m_s", "yb_slew_rad_s"):
+        value = float(settings[name])
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError(f"invalid NMPC {name}")
+        settings[name] = value
     slope = float(settings["cx_alpha_slope"])
     # SIGNED slope: d(cx)/d(alpha). Negative for this airframe; any finite value
     # is accepted because the sign is a physical property, not a convention.

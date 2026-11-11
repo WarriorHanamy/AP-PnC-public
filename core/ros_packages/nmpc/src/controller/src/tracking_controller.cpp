@@ -87,7 +87,9 @@ namespace nmpc
         cx_slope_lag_s >= static_cast<double>(kAlphaHistory) / ctrl_frq ||
         std::abs(cx_alpha_slope) > cx_slope_limit ||
         std::abs(horizon_s / traj_res_s - std::round(horizon_s / traj_res_s)) >
-            1e-9)
+            1e-9 ||
+        !std::isfinite(yb_hold_speed_m_s) || yb_hold_speed_m_s < 0.0 ||
+        !std::isfinite(yb_slew_rad_s) || yb_slew_rad_s < 0.0)
       throw std::invalid_argument("invalid NMPC horizon/control configuration");
   }
   CostReference cost_reference(const std::array<double, 3> &p,

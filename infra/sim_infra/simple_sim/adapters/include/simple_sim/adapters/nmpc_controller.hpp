@@ -30,8 +30,19 @@ namespace simple_sim
     std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory_;
     nmpc::TrackingController                                  controller_;
     std::ofstream                                             trace_file_;
-    void write_trace(const StepContext &,
-                     const std::vector<planner::core::ReferencePoint> &);
+    // Body-y actually shown to the solver, and the last cruise value held
+    // through a low-speed reversal. Reset with the plant; a reference append
+    // keeps them so the heading does not jump.
+    Eigen::Vector3d shown_yb_     = Eigen::Vector3d::UnitY();
+    Eigen::Vector3d cruise_yb_    = Eigen::Vector3d::UnitY();
+    bool            shown_ready_  = false;
+    bool            cruise_ready_ = false;
+    Eigen::Vector3d shape_body_y(const Eigen::Vector3d &flat_yb, double speed,
+                                 double dt, Eigen::Vector3d &shown,
+                                 Eigen::Vector3d &cruise, bool &shown_ready,
+                                 bool &cruise_ready) const;
+    void            write_trace(const StepContext &,
+                                const std::vector<planner::core::ReferencePoint> &);
   };
 
 }  // namespace simple_sim
