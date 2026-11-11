@@ -12,6 +12,7 @@
   #hud { left: 20px; color: #f5dc96; font-size: 20px; }
   #att { right: 20px; text-align: right; font-size: 18px; line-height: 1.45; font-variant-numeric: tabular-nums; }
   #att b { color: #f5dc96; font-weight: 600; }
+  #plan { margin-top: 6px; color: #f6b23c; font-size: 15px; }
   #speed { position: absolute; left: 20px; bottom: 64px; font-size: 18px; text-shadow: 0 1px 2px #000; }
   #cross { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; }
   #cross::before, #cross::after { content: ""; position: absolute; background: #fff; }
@@ -28,7 +29,7 @@
   <canvas id="view"></canvas>
   <div id="cross"></div>
   <div id="hud">去程 → 北端</div>
-  <div id="att"><div>侧滑角 <b id="beta">0.0°</b></div><div>pitch <b id="pitch">0.0°</b></div></div>
+  <div id="att"><div>侧滑角 <b id="beta">0.0°</b></div><div>pitch <b id="pitch">0.0°</b></div><div id="plan">规划轨迹</div></div>
   <div id="speed">0.0 m/s</div>
   <div id="bar">
     <button id="play" type="button">暂停</button>
@@ -109,6 +110,30 @@ gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
 const uMVP = gl.getUniformLocation(prog, "uMVP");
 gl.enable(gl.DEPTH_TEST);
 gl.clearColor(0.62, 0.72, 0.80, 1);
+const lvs = `
+attribute vec3 aPos;
+uniform mat4 uMVP;
+void main() { gl_Position = uMVP * vec4(aPos, 1.0); }`;
+const lfs = `
+precision mediump float;
+uniform vec3 uColor;
+void main() { gl_FragColor = vec4(uColor, 1.0); }`;
+const lprog = gl.createProgram();
+gl.attachShader(lprog, compile(gl.VERTEX_SHADER, lvs));
+gl.attachShader(lprog, compile(gl.FRAGMENT_SHADER, lfs));
+gl.linkProgram(lprog);
+if (!gl.getProgramParameter(lprog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(lprog));
+const lBuf = gl.createBuffer();
+const lLoc = gl.getAttribLocation(lprog, "aPos");
+const lMVP = gl.getUniformLocation(lprog, "uMVP");
+const lColor = gl.getUniformLocation(lprog, "uColor");
+const plan = new Float32Array(NSAMP * 3);
+for (let i = 0; i < NSAMP; i++) {
+  plan[i * 3] = traj[i * 11 + 1];
+  plan[i * 3 + 1] = traj[i * 11 + 2];
+  plan[i * 3 + 2] = traj[i * 11 + 3];
+}
+const ribbon = new Float32Array(1200 * 3);
 function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
 function cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
 function norm(a) {
@@ -175,8 +200,40 @@ function pose(time) {
     speed: sample(7),
     vy: sample(8),
     pitch: sample(9),
-    beta: sample(10)
+    beta: sample(10),
+    index: i
   };
+}
+function plannedRibbon(i0) {
+  const pts = [];
+  let dist = 0;
+  const vy0 = traj[i0 * STRIDE + 8];
+  for (let i = i0; i < NSAMP && pts.length < 360; i++) {
+    const p = [plan[i * 3], plan[i * 3 + 1], plan[i * 3 + 2]];
+    if (pts.length) {
+      const q = pts[pts.length - 1];
+      dist += Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+      const vy = traj[i * STRIDE + 8];
+      if (dist > 25 && vy0 * vy < -1) break;
+    }
+    if (dist > 180) break;
+    pts.push(p);
+  }
+  if (pts.length < 2) return 0;
+  let n = 0;
+  const half = 0.45;
+  for (let k = 0; k < pts.length; k++) {
+    const a = pts[Math.max(0, k - 1)];
+    const b = pts[Math.min(pts.length - 1, k + 1)];
+    let tx = b[0] - a[0], ty = b[1] - a[1];
+    const L = Math.hypot(tx, ty) || 1;
+    tx /= L; ty /= L;
+    const rx = -ty * half, ry = tx * half;
+    const z = pts[k][2] - 0.12;
+    ribbon[n++] = pts[k][0] - rx; ribbon[n++] = pts[k][1] - ry; ribbon[n++] = z;
+    ribbon[n++] = pts[k][0] + rx; ribbon[n++] = pts[k][1] + ry; ribbon[n++] = z;
+  }
+  return n / 3;
 }
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -199,9 +256,25 @@ function draw(now) {
   const aspect = canvas.width / canvas.height;
   const hfov = 78 * Math.PI / 180;
   const vfov = 2 * Math.atan(Math.tan(hfov / 2) / aspect);
-  gl.uniformMatrix4fv(uMVP, false, mul(perspective(vfov, aspect, 0.25, 80), viewOf(p.eye, p.look)));
+  const mvp = mul(perspective(vfov, aspect, 0.25, 80), viewOf(p.eye, p.look));
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+  gl.uniformMatrix4fv(uMVP, false, mvp);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.drawArrays(gl.POINTS, 0, NPTS);
+  const nRibbon = plannedRibbon(p.index);
+  if (nRibbon >= 4) {
+    gl.useProgram(lprog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, ribbon.subarray(0, nRibbon * 3), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(lLoc);
+    gl.vertexAttribPointer(lLoc, 3, gl.FLOAT, false, 0, 0);
+    gl.uniformMatrix4fv(lMVP, false, mvp);
+    gl.uniform3f(lColor, 0.97, 0.62, 0.12);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, nRibbon);
+  }
   hud.textContent = p.vy >= 0 ? "去程 → 北端" : "返程 → 南端";
   speedEl.textContent = p.speed.toFixed(1) + " m/s";
   betaEl.textContent = signed(p.beta);
