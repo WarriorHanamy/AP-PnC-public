@@ -77,7 +77,9 @@ def run(
 @app.callback(invoke_without_command=True)
 def benchmark(
     ctx: typer.Context,
-    aero: str = typer.Option("lyu", "--aero", help="Comma list of aero models: none, lyu, phi"),
+    aero: str = typer.Option(
+        "lyu", "--aero", help="Comma list of aero models: none, lyu, phi, multirotor"
+    ),
     vmax: str = typer.Option("8,10,12", "--vmax", help="Comma list of speed caps [m/s]"),
     variants: str = typer.Option(
         "se3-aero-ff,se3-base,nmpc",

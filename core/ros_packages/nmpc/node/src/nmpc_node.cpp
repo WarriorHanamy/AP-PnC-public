@@ -50,8 +50,11 @@ class NMPC : public rclcpp::Node
     cfg.cx_slope_min_excitation =
         n["cx_slope_min_excitation"].as<double>(cfg.cx_slope_min_excitation);
     cfg.cx_slope_lag_s = n["cx_slope_lag_s"].as<double>(cfg.cx_slope_lag_s);
-    controller_        = std::make_unique<nmpc::TrackingController>(cfg);
-    const auto qos     = rclcpp::QoS(1).reliable();
+    cfg.yb_hold_speed_m_s =
+        n["yb_hold_speed_m_s"].as<double>(cfg.yb_hold_speed_m_s);
+    cfg.yb_slew_rad_s = n["yb_slew_rad_s"].as<double>(cfg.yb_slew_rad_s);
+    controller_       = std::make_unique<nmpc::TrackingController>(cfg);
+    const auto qos    = rclcpp::QoS(1).reliable();
     control_pub_ =
         create_publisher<interface::msg::Control>("/nmpc/control", qos);
     ready_pub_ =
@@ -114,8 +117,8 @@ class NMPC : public rclcpp::Node
       command.rates_sp          = result.rates;
       command.specific_force_sp = result.specific_force;
       command.sol_time          = std::chrono::duration<double, std::milli>(
-                                      std::chrono::steady_clock::now() - start)
-                                      .count();
+                             std::chrono::steady_clock::now() - start)
+                             .count();
       control_pub_->publish(command);
       if (!reference.tracking_valid)
         return;

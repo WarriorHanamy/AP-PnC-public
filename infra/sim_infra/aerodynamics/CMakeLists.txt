@@ -64,6 +64,9 @@ ament_auto_add_library(${PROJECT_NAME}_bspline src/bspline_aerodynamics.cpp)
 target_link_libraries(${PROJECT_NAME}_bspline yaml-cpp)
 # Non aerodynamics ("none")
 ament_auto_add_library(${PROJECT_NAME}_non src/non_aerodynamics.cpp)
+# Multirotor quadratic drag ("multirotor")
+ament_auto_add_library(${PROJECT_NAME}_multirotor src/multirotor_drag.cpp)
+target_link_libraries(${PROJECT_NAME}_multirotor yaml-cpp)
 
 # Shared factory: the single definition of canonical model names
 # (lyu | phi | ma | advanced | none); every simulator selects through it.
@@ -73,6 +76,7 @@ target_link_libraries(${PROJECT_NAME}_aero_factory
   ${PROJECT_NAME}_phi
   ${PROJECT_NAME}_bspline
   ${PROJECT_NAME}_advanced_lift_drag
+  ${PROJECT_NAME}_multirotor
   ${PROJECT_NAME}_non
 )
 

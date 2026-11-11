@@ -17,6 +17,7 @@
 #include <aerodynamics/advanced_lift_drag.hpp>
 #include <aerodynamics/aero_factory.hpp>
 #include <aerodynamics/bspline_aerodynamics.hpp>
+#include <aerodynamics/multirotor_drag.hpp>
 #include <aerodynamics/non_aerodynamics.hpp>
 #include <aerodynamics/phi_aerodynamics.hpp>
 #include <aerodynamics/zhang_lyu_aerodynamics.hpp>
@@ -39,6 +40,8 @@ namespace aerodynamics
         return std::make_unique<BsplineAerodynamicsCreator>();
       if (name == "advanced")
         return std::make_unique<AdvancedLiftDragCreator>();
+      if (name == "multirotor")
+        return std::make_unique<MultirotorDragCreator>();
       if (name == "none")
         return std::make_unique<NonAerodynamicsCreator>();
 

@@ -1,5 +1,7 @@
 #include "simple_sim/adapters/nmpc_controller.hpp"
 
+#include <Eigen/Geometry>
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <stdexcept>
@@ -39,19 +41,77 @@ namespace simple_sim
     }
   }
   void NmpcController::set_reference(
-      std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory)
+      std::shared_ptr<const planner::core::ReferenceTrajectory> trajectory,
+      double                                                    now_s)
   {
     if (!trajectory || trajectory->empty())
       throw std::invalid_argument("empty NMPC trajectory update");
+    if (trajectory_ &&
+        trajectory_->duration() < now_s + controller_.config().horizon_s)
+      throw std::logic_error(
+          "reference append would alter the active NMPC horizon");
     trajectory_ = std::move(trajectory);
   }
   void NmpcController::reset(const State &initial)
   {
     validate_state(initial);
+    shown_ready_  = false;
+    cruise_ready_ = false;
     controller_.reset({controller_.config().initial_specific_thrust,
                        initial.angular_velocity.x(),
                        initial.angular_velocity.y(),
                        initial.angular_velocity.z()});
+  }
+  Eigen::Vector3d NmpcController::shape_body_y(const Eigen::Vector3d &flat_yb,
+                                               double speed, double dt,
+                                               Eigen::Vector3d &shown,
+                                               Eigen::Vector3d &cruise,
+                                               bool            &shown_ready,
+                                               bool &cruise_ready) const
+  {
+    const auto     &cfg = controller_.config();
+    Eigen::Vector3d target =
+        flat_yb.norm() > 1e-6 ? flat_yb.normalized() : Eigen::Vector3d::UnitY();
+    if (cfg.yb_hold_speed_m_s > 0.0 && speed >= cfg.yb_hold_speed_m_s)
+    {
+      cruise       = target;
+      cruise_ready = true;
+    }
+    else if (cfg.yb_hold_speed_m_s > 0.0 && cruise_ready)
+    {
+      target = cruise;
+    }
+    if (!shown_ready)
+    {
+      shown       = target;
+      shown_ready = true;
+      return shown;
+    }
+    shown.normalize();
+    if (!(cfg.yb_slew_rad_s > 0.0))
+    {
+      shown = target;
+      return shown;
+    }
+    if (!(dt > 0.0))
+      return shown;
+    const double angle = std::acos(std::clamp(shown.dot(target), -1.0, 1.0));
+    const double step  = cfg.yb_slew_rad_s * dt;
+    if (angle <= step || angle < 1e-8)
+    {
+      shown = target;
+      return shown;
+    }
+    Eigen::Vector3d axis = shown.cross(target);
+    if (axis.norm() < 1e-8)
+    {
+      axis = shown.cross(Eigen::Vector3d::UnitZ());
+      if (axis.norm() < 1e-8)
+        axis = shown.cross(Eigen::Vector3d::UnitX());
+    }
+    shown = Eigen::AngleAxisd(step, axis.normalized()) * shown;
+    shown.normalize();
+    return shown;
   }
   ControlResult NmpcController::compute(const StepContext &ctx, const State &s,
                                         const Feedback &feedback)
@@ -65,15 +125,25 @@ namespace simple_sim
     std::vector<nmpc::CostReference>           horizon;
     std::vector<planner::core::ReferencePoint> planned;
     horizon.reserve(n + 1);
+    Eigen::Vector3d shown        = shown_yb_;
+    Eigen::Vector3d cruise       = cruise_yb_;
+    bool            shown_ready  = shown_ready_;
+    bool            cruise_ready = cruise_ready_;
     for (int i = 0; i <= n; ++i)
     {
       const double t   = ctx.time_s() + i * cfg.traj_res_s;
       const auto   ref = trajectory_->sample(t);
       planned.push_back(ref);
-      horizon.push_back(nmpc::cost_reference(
-          {ref.p.x(), ref.p.y(), ref.p.z()}, {ref.v.x(), ref.v.y(), ref.v.z()},
-          {ref.yb.x(), ref.yb.y(), ref.yb.z()}));
+      const double dt = i == 0 ? 0.0 : cfg.traj_res_s;
+      const auto   yb = shape_body_y(ref.yb, ref.v.norm(), dt, shown, cruise,
+                                     shown_ready, cruise_ready);
+      horizon.push_back(nmpc::cost_reference({ref.p.x(), ref.p.y(), ref.p.z()},
+                                             {ref.v.x(), ref.v.y(), ref.v.z()},
+                                             {yb.x(), yb.y(), yb.z()}));
     }
+    const auto now = trajectory_->sample(ctx.time_s());
+    shape_body_y(now.yb, now.v.norm(), 1.0 / cfg.ctrl_frq, shown_yb_,
+                 cruise_yb_, shown_ready_, cruise_ready_);
     const std::array<double, 13> x = {
         s.position.x(),         s.position.y(),         s.position.z(),
         s.velocity.x(),         s.velocity.y(),         s.velocity.z(),

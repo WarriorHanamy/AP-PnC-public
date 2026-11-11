@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
+#include <gcopter/voxel_map.hpp>
 #include <iomanip>
 #include <limits>
 #include <planner_core/planner.hpp>
@@ -13,9 +15,6 @@
 #include <stdexcept>
 
 #include "simple_sim/rate_loop.hpp"
-#ifdef SIMPLE_SIM_WITH_NMPC
-#include "simple_sim/adapters/nmpc_controller.hpp"
-#endif
 
 namespace simple_sim
 {
@@ -77,6 +76,120 @@ namespace simple_sim
       vector_csv(out, a.velocity_body);
       out << ',' << a.valid;
     }
+    voxel_map::VoxelMap load_point_cloud_map(const std::string &path,
+                                             double voxel, double margin,
+                                             double dilate_radius)
+    {
+      std::ifstream file(path, std::ios::binary);
+      if (!file)
+        throw std::runtime_error("cannot read map point cloud " + path);
+      std::string line;
+      std::string format;
+      int         count  = -1;
+      bool        binary = false;
+      int         stride = 0;
+      int         x_off  = -1;
+      int         y_off  = -1;
+      int         z_off  = -1;
+      int         cursor = 0;
+      bool        vertex = false;
+      while (std::getline(file, line))
+      {
+        if (!line.empty() && line.back() == '\r')
+          line.pop_back();
+        if (line.rfind("format ", 0) == 0)
+          format = line.substr(7);
+        else if (line.rfind("element vertex ", 0) == 0)
+        {
+          count  = std::stoi(line.substr(15));
+          vertex = true;
+          cursor = 0;
+        }
+        else if (line.rfind("element ", 0) == 0)
+          vertex = false;
+        else if (vertex && line.rfind("property ", 0) == 0)
+        {
+          const auto name  = line.substr(line.rfind(' ') + 1);
+          const int  width = line.find("float") != std::string::npos ||
+                                    line.find("float32") != std::string::npos
+                                 ? 4
+                                 : 0;
+          if (width == 0)
+            throw std::runtime_error(
+                "point cloud properties must be float xyz");
+          if (name == "x")
+            x_off = cursor;
+          else if (name == "y")
+            y_off = cursor;
+          else if (name == "z")
+            z_off = cursor;
+          cursor += width;
+        }
+        else if (line == "end_header")
+          break;
+      }
+      if (count < 1 || x_off < 0 || y_off < 0 || z_off < 0)
+        throw std::runtime_error("point cloud header has no xyz vertices");
+      stride = cursor;
+      binary = format.find("binary_little_endian") != std::string::npos;
+      if (!binary && format.find("ascii") == std::string::npos)
+        throw std::runtime_error(
+            "point cloud must be ascii or binary little endian");
+      std::vector<Eigen::Vector3d> points;
+      points.reserve(static_cast<std::size_t>(count));
+      if (binary)
+      {
+        std::vector<char> row(static_cast<std::size_t>(stride));
+        for (int index = 0; index < count; ++index)
+        {
+          file.read(row.data(), stride);
+          if (!file)
+            throw std::runtime_error("point cloud payload truncated");
+          float xyz[3];
+          std::memcpy(xyz, row.data() + x_off, 4);
+          std::memcpy(xyz + 1, row.data() + y_off, 4);
+          std::memcpy(xyz + 2, row.data() + z_off, 4);
+          if (std::isfinite(xyz[0]) && std::isfinite(xyz[1]) &&
+              std::isfinite(xyz[2]))
+            points.emplace_back(xyz[0], xyz[1], xyz[2]);
+        }
+      }
+      else
+      {
+        for (int index = 0; index < count; ++index)
+        {
+          double x = 0, y = 0, z = 0;
+          if (!(file >> x >> y >> z))
+            throw std::runtime_error("point cloud ascii payload truncated");
+          if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z))
+            points.emplace_back(x, y, z);
+        }
+      }
+      if (points.empty() || !(voxel > 0.0) || !(margin >= 0.0))
+        throw std::runtime_error("point cloud map is empty or invalid");
+      Eigen::Vector3d lo = points.front();
+      Eigen::Vector3d hi = points.front();
+      for (const Eigen::Vector3d &point : points)
+      {
+        lo = lo.cwiseMin(point);
+        hi = hi.cwiseMax(point);
+      }
+      lo -= Eigen::Vector3d::Constant(margin);
+      hi += Eigen::Vector3d::Constant(margin);
+      const Eigen::Vector3i size =
+          ((hi - lo) / voxel).array().ceil().cast<int>().matrix() +
+          Eigen::Vector3i::Ones();
+      if ((size.array() <= 1).any() || size.cast<long>().prod() > 20000000L)
+        throw std::runtime_error("point cloud voxel grid is an unsafe size");
+      voxel_map::VoxelMap map(size, lo, voxel);
+      for (const Eigen::Vector3d &point : points)
+        map.setOccupied(point);
+      const int cells =
+          std::max(1, static_cast<int>(std::ceil(dilate_radius / voxel)));
+      map.dilate(cells);
+      return map;
+    }
+
     void state_csv(std::ostream &out, const State &s)
     {
       vector_csv(out, s.position);
@@ -143,6 +256,22 @@ namespace simple_sim
         if (trajectory_->empty())
           throw std::invalid_argument("empty cached planner reference");
       }
+      else if (!planning.problem.map.point_cloud.empty())
+      {
+        // Pillar forest as a point cloud: CIRI (or the selected backend)
+        // replaces the fixed box corridor.
+        const auto cloud =
+            load_point_cloud_map(planning.problem.map.point_cloud,
+                                 planning.problem.map.voxel_scale_m,
+                                 planning.problem.map.bounds_margin_m,
+                                 planning.problem.map.dilate_radius_m);
+        auto planned = planner.plan_map_route(cloud);
+        if (!planned || planned->empty())
+          throw std::runtime_error("point-cloud corridor planning failed");
+        trajectory_ =
+            std::make_shared<const planner::core::ReferenceTrajectory>(
+                std::move(*planned));
+      }
       else
       {
         auto planned = planner.plan();
@@ -182,39 +311,18 @@ namespace simple_sim
               : config_.aero.inject_thrust_axis == 1;
       const bool zero_thrust_axis_aero = !inject_thrust_axis_aero;
       const auto aero_model = aerodynamics::make_aero(config_.aero_model);
-      if (config_.controller == "se3")
-      {
-        controller_ = std::make_unique<Se3Controller>(
-            trajectory_, config_.plant.gravity, config_.se3, aero_model,
-            config_.plant.mass, zero_thrust_axis_aero, config_.aero);
-      }
-#ifdef SIMPLE_SIM_WITH_NMPC
-      else
-      {
-        nmpc::TrackingConfig tracking_config;
-        tracking_config.horizon_s  = nmpc_settings["horizon_s"].as<double>();
-        tracking_config.traj_res_s = nmpc_settings["traj_res_s"].as<double>();
-        tracking_config.ctrl_frq   = nmpc_settings["ctrl_frq"].as<double>();
-        tracking_config.initial_specific_thrust =
-            nmpc_settings["initial_specific_thrust"].as<double>();
-        tracking_config.cx_alpha_slope =
-            nmpc_settings["cx_alpha_slope"].as<double>();
-        tracking_config.cx_slope_estimation =
-            nmpc_settings["cx_slope_estimation"].as<bool>();
-        tracking_config.cx_slope_forgetting =
-            nmpc_settings["cx_slope_forgetting"].as<double>();
-        tracking_config.cx_slope_limit =
-            nmpc_settings["cx_slope_limit"].as<double>();
-        tracking_config.cx_slope_covariance_limit =
-            nmpc_settings["cx_slope_covariance_limit"].as<double>();
-        tracking_config.cx_slope_min_excitation =
-            nmpc_settings["cx_slope_min_excitation"].as<double>();
-        tracking_config.cx_slope_lag_s =
-            nmpc_settings["cx_slope_lag_s"].as<double>();
-        controller_ = std::make_unique<NmpcController>(
-            trajectory_, tracking_config, output_dir_ / "nmpc_reference.csv");
-      }
-#endif
+      ControllerSelection selection;
+      selection.backend               = config_.controller;
+      selection.trajectory            = trajectory_;
+      selection.gravity               = config_.plant.gravity;
+      selection.mass                  = config_.plant.mass;
+      selection.se3                   = config_.se3;
+      selection.zero_thrust_axis_aero = zero_thrust_axis_aero;
+      selection.aero                  = config_.aero;
+      selection.aero_model            = aero_model;
+      selection.nmpc_yaml             = config_.nmpc_yaml;
+      selection.trace_file            = output_dir_ / "nmpc_reference.csv";
+      controller_                     = make_controller(selection);
       // Any canonical model ("none" resolves to the null model, wrench = 0)
       ForceModel aero = tailsitter_aero(aero_model, config_.aero);
       if (zero_thrust_axis_aero)
@@ -395,11 +503,8 @@ namespace simple_sim
   void Experiment::append_reference(
       const planner::core::ReferenceTrajectory &tail)
   {
-#ifdef SIMPLE_SIM_WITH_NMPC
-    auto *controller = dynamic_cast<NmpcController *>(controller_.get());
-    if (!controller || tail.empty() || finished_)
-      throw std::logic_error(
-          "reference append requires an active NMPC experiment");
+    if (!controller_ || tail.empty() || finished_)
+      throw std::logic_error("reference append requires an active controller");
     if (!std::isfinite(tail.duration()) || tail.duration() <= 0.0)
       throw std::invalid_argument("reference append has invalid duration");
     for (const auto &piece : tail.representation())
@@ -407,13 +512,9 @@ namespace simple_sim
           !piece.getCoeffMat().allFinite())
         throw std::invalid_argument(
             "reference append has non-finite coefficients");
-    const auto   settings = YAML::LoadFile(config_.nmpc_yaml.string())["nmpc"];
-    const double now      = static_cast<double>(runner_->time_ns()) * 1e-9;
-    if (trajectory_->duration() < now + settings["horizon_s"].as<double>())
-      throw std::logic_error(
-          "reference append would alter the active NMPC horizon");
-    const auto end   = trajectory_->sample(trajectory_->duration());
-    const auto start = tail.sample(0.0);
+    const double now   = static_cast<double>(runner_->time_ns()) * 1e-9;
+    const auto   end   = trajectory_->sample(trajectory_->duration());
+    const auto   start = tail.sample(0.0);
     if ((end.p - start.p).norm() > 1e-5 || (end.v - start.v).norm() > 1e-5 ||
         (end.a - start.a).norm() > 1e-4)
       throw std::invalid_argument("reference append must be C2 continuous");
@@ -421,9 +522,11 @@ namespace simple_sim
     joined.append(tail.representation());
     auto updated = std::make_shared<const planner::core::ReferenceTrajectory>(
         std::move(joined));
-    // Save the exact coefficients before exposing them to the control loop.
+    // The backend may reject the append (the NMPC horizon must stay covered).
+    // That rejection happens before the saved reference changes.
     auto previous = trajectory_;
-    trajectory_   = updated;
+    controller_->set_reference(updated, now);
+    trajectory_ = updated;
     try
     {
       save_reference();
@@ -431,13 +534,9 @@ namespace simple_sim
     catch (...)
     {
       trajectory_ = previous;
+      controller_->set_reference(previous, now);
       throw;
     }
-    controller->set_reference(std::move(updated));
-#else
-    (void)tail;
-    throw std::logic_error("reference append requires NMPC support");
-#endif
   }
 
   Experiment::~Experiment()
@@ -555,28 +654,27 @@ namespace simple_sim
         << ",\n  \"nmpc_prediction_model\": \""
         << (config_.controller == "nmpc" ? "command_integrator"
                                          : "not_applicable")
-        << "\""
-        << ",\n  \"nmpc_aero_axis\": "
+        << "\"" << ",\n  \"nmpc_aero_axis\": "
         << json_string(config_.controller == "nmpc" ? "body_x_lumped"
                                                     : "not_applicable")
         << ",\n  \"arm_length_scale\": " << config_.arm_length_scale
         << ",\n  \"aero_model\": " << json_string(config_.aero_model)
         << ",\n  \"thrust_realization\": "
         << json_string(config_.throttle.realization)
-        << ",\n  \"aero_validation\": " << json_string(config_.aero_validation)
-#ifdef SIMPLE_SIM_WITH_NMPC
-        << ",\n  \"nmpc_solver_abi\": " << NMPC_SOLVER_ABI
-#endif
-        << ",\n  \"integrator\": \"rk4\",\n  \"physics_dt_ns\": "
-        << config_.physics_dt_ns << ",\n  \"control_dt_ns\": "
-        << (runner_ ? runner_->control_dt_ns() : 0)
-        << ",\n  \"reference_terminal_policy\": \"hold_last_point\""
-        << ",\n  \"terminal_hold_s\": " << config_.terminal_hold_s
-        << ",\n  \"trajectory_duration_s\": "
-        << (trajectory_ ? trajectory_->duration() : 0.0)
-        << ",\n  \"committed_steps\": " << (runner_ ? runner_->index() : 0)
-        << ",\n  \"time_ns\": " << (runner_ ? runner_->time_ns() : 0)
-        << ",\n  \"stochastic_model\": false\n}\n";
+        << ",\n  \"aero_validation\": " << json_string(config_.aero_validation);
+    if (controller_)
+      if (const auto abi = controller_->solver_abi())
+        manifest << ",\n  \"nmpc_solver_abi\": " << *abi;
+    manifest << ",\n  \"integrator\": \"rk4\",\n  \"physics_dt_ns\": "
+             << config_.physics_dt_ns << ",\n  \"control_dt_ns\": "
+             << (runner_ ? runner_->control_dt_ns() : 0)
+             << ",\n  \"reference_terminal_policy\": \"hold_last_point\""
+             << ",\n  \"terminal_hold_s\": " << config_.terminal_hold_s
+             << ",\n  \"trajectory_duration_s\": "
+             << (trajectory_ ? trajectory_->duration() : 0.0)
+             << ",\n  \"committed_steps\": " << (runner_ ? runner_->index() : 0)
+             << ",\n  \"time_ns\": " << (runner_ ? runner_->time_ns() : 0)
+             << ",\n  \"stochastic_model\": false\n}\n";
     manifest.close();
     fs::rename(output_dir_ / "manifest.json.tmp",
                output_dir_ / "manifest.json");

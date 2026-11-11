@@ -14,12 +14,15 @@
  * Tail-sitter UAV.
  */
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <gcopter/sfc_gen.hpp>
 #include <iostream>
-#include <planner_core/grid_astar.hpp>
+#include <planner_core/corridor_adapter.hpp>
+#include <planner_core/map_query.hpp>
 #include <planner_core/planner.hpp>
+#include <planner_core/waypoint_route.hpp>
 
 namespace planner::core
 {
@@ -100,15 +103,30 @@ namespace planner::core
     }
   }
 
+  std::vector<basic_trajectories::Mat3x4> Planner::seed_route() const
+  {
+    if (config_.problem.waypoints.size() >= 2)
+    {
+      return sample_waypoint_route(config_.problem.waypoints,
+                                   config_.problem.piece_n,
+                                   config_.problem.waypoint_speed_m_s);
+    }
+    return basic_traj_->samplingPointArray(config_.problem.piece_n);
+  }
+
+  std::vector<basic_trajectories::Mat3x4> Planner::mission_route() const
+  {
+    return seed_route();
+  }
+
   void Planner::create_basic_trajectory_sfc(
-      std::vector<Eigen::MatrixX4d> &hPolys)
+      const std::vector<basic_trajectories::Mat3x4> &route,
+      std::vector<Eigen::MatrixX4d>                 &hPolys)
   {
     Eigen::RowVector4d h1, h2, h3, h4, h5, h6;
 
     Eigen::MatrixX4d H;
     H.resize(6, 4);
-
-    auto route = basic_traj_->samplingPointArray(config_.problem.piece_n);
 
     for (size_t i = 1; i < route.size() - 1; i++)
     {
@@ -142,10 +160,11 @@ namespace planner::core
   {
     std::vector<Eigen::MatrixX4d> hPolys;
     log(LogLevel::Info, "In Planning");
-    create_basic_trajectory_sfc(hPolys);
+    const bool waypoint_mission = config_.problem.waypoints.size() >= 2;
+    const auto route            = seed_route();
+    create_basic_trajectory_sfc(route, hPolys);
 
     Eigen::Matrix3d iniState, finState;
-    auto route = basic_traj_->samplingPointArray(config_.problem.piece_n);
     iniState << route.front().col(0), Eigen::Vector3d::Zero(),
         Eigen::Vector3d::Zero();
     finState << route.back().col(0), Eigen::Vector3d::Zero(),
@@ -155,17 +174,35 @@ namespace planner::core
     TrajectoryRepresentation<5> traj;
     Eigen::VectorXd             initTime;
     initTime.resize(config_.problem.piece_n);
-    initTime.setConstant(2 * M_PI / config_.problem.basic_traj.rate /
-                         config_.problem.piece_n);
+    if (waypoint_mission)
+    {
+      const double length = waypoint_route_length(config_.problem.waypoints);
+      initTime.setConstant(
+          std::max(1e-3, length / config_.problem.waypoint_speed_m_s /
+                             static_cast<double>(config_.problem.piece_n)));
+    }
+    else
+    {
+      initTime.setConstant(2 * M_PI / config_.problem.basic_traj.rate /
+                           config_.problem.piece_n);
+    }
 
     Eigen::Matrix3Xd initPointsPos(3, config_.problem.piece_n - 1);
     for (int i = 0; i < config_.problem.piece_n - 1; i++)
     {
-      Eigen::Vector3d v = route[i].col(1);
+      Eigen::Vector3d v = route[static_cast<std::size_t>(i)].col(1);
       v.normalize();
       Eigen::Vector3d u = v.cross(Eigen::Vector3d::UnitZ());
+      // The circle seed offsets by the corridor's +y half-extent. A long
+      // waypoint polyline uses that same half-extent as along-track overlap,
+      // so its lateral nudge stays small enough to remain inside the box.
+      const double nudge =
+          waypoint_mission
+              ? std::min(0.15, 0.25 * std::min(config_.problem.box.front,
+                                               config_.problem.box.back))
+              : config_.problem.box.right * 0.8;
       initPointsPos.col(i) =
-          route[i + 1].col(0) + u * config_.problem.box.right * 0.8;
+          route[static_cast<std::size_t>(i) + 1].col(0) + u * nudge;
     }
 
     if (!gcopter.setup_basic_trajectory(iniState, finState, initTime,
@@ -196,62 +233,23 @@ namespace planner::core
     return ReferenceTrajectory(std::move(traj));
   }
 
-  bool Planner::build_corridor_sfc(const Eigen::Vector3d         &start,
-                                   const Eigen::Vector3d         &goal,
-                                   const voxel_map::VoxelMap     &map,
-                                   std::vector<Eigen::MatrixX4d> &hPolys,
-                                   std::vector<Eigen::Vector3d>  &route)
-  {
-    if (!gridAstar(start, goal, map, route))
-    {
-      log(LogLevel::Error, "Corridor planning: no collision-free route found");
-      return false;
-    }
-
-    std::vector<Eigen::Vector3d> surf;
-    map.getSurf(surf);
-    if (surf.empty())
-    {
-      // Nothing occupied anywhere: skip FIRI (which indexes surf[0]
-      // unconditionally) and use one corridor spanning the whole map.
-      Eigen::MatrixX4d box(6, 4);
-      box.setZero();
-      box(0, 0) = 1.0;
-      box(0, 3) = -map.getCorner().x();
-      box(1, 0) = -1.0;
-      box(1, 3) = map.getOrigin().x();
-      box(2, 1) = 1.0;
-      box(2, 3) = -map.getCorner().y();
-      box(3, 1) = -1.0;
-      box(3, 3) = map.getOrigin().y();
-      box(4, 2) = 1.0;
-      box(4, 3) = -map.getCorner().z();
-      box(5, 2) = -1.0;
-      box(5, 3) = map.getOrigin().z();
-      hPolys    = {box};
-      return true;
-    }
-
-    sfc_gen::convexCover(route, surf, map.getOrigin(), map.getCorner(),
-                         config_.problem.map.sfc_progress_m,
-                         config_.problem.map.sfc_range_m, hPolys);
-    sfc_gen::shortCut(hPolys);
-    if (hPolys.empty())
-    {
-      log(LogLevel::Error, "Corridor planning: FIRI produced no polytopes");
-      return false;
-    }
-    return true;
-  }
-
   std::optional<ReferenceTrajectory> Planner::plan_corridor(
       const Eigen::Matrix3d &iniState, const Eigen::Matrix3d &finState,
       const voxel_map::VoxelMap &map)
   {
     std::vector<Eigen::MatrixX4d> hPolys;
     std::vector<Eigen::Vector3d>  route;
-    if (!build_corridor_sfc(iniState.col(0), finState.col(0), map, hPolys,
-                            route))
+    VoxelMapAdapter               query(map);
+    CorridorSettings              settings;
+    settings.progress_m      = config_.problem.map.sfc_progress_m;
+    settings.range_m         = config_.problem.map.sfc_range_m;
+    settings.robot_radius_m  = config_.problem.map.ciri_robot_radius_m;
+    settings.ciri_iterations = config_.problem.map.ciri_iterations;
+    const auto corridor      = make_corridor_adapter(
+        config_.problem.corridor_backend, settings,
+        [this](const std::string &msg) { log(LogLevel::Error, msg); });
+    if (!corridor->build(query, iniState.col(0), finState.col(0), hPolys,
+                         route))
     {
       return std::nullopt;
     }
@@ -275,16 +273,16 @@ namespace planner::core
         const double angle = std::acos(std::clamp(
             iniState.col(1).normalized().dot(finState.col(1).normalized()),
             -1.0, 1.0));
-        base = distance / speed *
+        base               = distance / speed *
                (angle < 1e-6 ? 1.0 : angle / (2 * std::sin(angle / 2)));
       }
       auto connect = [&](double t)
       {
         Eigen::Matrix<double, 3, 6> c;
         const Eigen::Vector3d       dp = finState.col(0) - iniState.col(0) -
-                                         t * iniState.col(1) -
-                                         0.5 * t * t * iniState.col(2);
-        const Eigen::Vector3d       dv =
+                                   t * iniState.col(1) -
+                                   0.5 * t * t * iniState.col(2);
+        const Eigen::Vector3d dv =
             finState.col(1) - iniState.col(1) - t * iniState.col(2);
         const Eigen::Vector3d da = finState.col(2) - iniState.col(2);
         c.col(5)                 = iniState.col(0);
@@ -485,6 +483,48 @@ namespace planner::core
     log(LogLevel::Error,
         "GCOPTER optimization diverged (corridor) after all seed retries");
     return std::nullopt;
+  }
+
+  std::optional<ReferenceTrajectory> Planner::plan_map_route(
+      const voxel_map::VoxelMap &map)
+  {
+    if (config_.problem.waypoints.size() < 2)
+    {
+      log(LogLevel::Error, "Map route needs at least two waypoints");
+      return std::nullopt;
+    }
+    TrajectoryRepresentation<5> joined;
+    Eigen::Matrix3d             state = Eigen::Matrix3d::Zero();
+    state.col(0)                      = config_.problem.waypoints.front();
+    for (std::size_t index = 1; index < config_.problem.waypoints.size();
+         ++index)
+    {
+      Eigen::Matrix3d goal = Eigen::Matrix3d::Zero();
+      goal.col(0)          = config_.problem.waypoints[index];
+      auto leg             = plan_corridor(state, goal, map);
+      if (!leg || leg->empty())
+      {
+        log(LogLevel::Error, "Map corridor leg failed");
+        return std::nullopt;
+      }
+      if (joined.getPieceNum() == 0)
+      {
+        joined = leg->representation();
+      }
+      else
+      {
+        joined.append(leg->representation());
+      }
+      const auto end = leg->sample(leg->duration());
+      state.col(0)   = end.p;
+      state.col(1)   = end.v;
+      state.col(2)   = end.a;
+    }
+    if (joined.getPieceNum() == 0)
+    {
+      return std::nullopt;
+    }
+    return ReferenceTrajectory(std::move(joined));
   }
 
 }  // namespace planner::core

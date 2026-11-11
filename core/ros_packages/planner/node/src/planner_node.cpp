@@ -18,13 +18,18 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <interface/msg/state.hpp>
 #include <memory>
+#include <nav_msgs/msg/odometry.hpp>
 #include <optional>
+#include <planner_core/map_query.hpp>
 #include <planner_core/planner.hpp>
+#include <planner_node/lidar_cloud_world.hpp>
 #include <planner_node/reference_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
@@ -135,6 +140,32 @@ namespace planner::node
                                          }
                                        });
 
+      load_lidar_mount(cfg);
+      world_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+          config_.problem.perception.world_cloud_topic,
+          rclcpp::SensorDataQoS());
+      if (config_.problem.map_backend == "rog")
+      {
+        rog_map_ = core::make_rog_map_adapter(config_.problem.rog_map_config);
+        if (!rog_map_ || !rog_map_->available())
+        {
+          throw std::runtime_error(
+              "map_backend rog requires a planner build linked against an "
+              "external ROG-Map core");
+        }
+        RCLCPP_INFO(this->get_logger(),
+                    "ROG-Map linked; ros_callback is forced off and updateMap "
+                    "receives the world-frame cloud");
+      }
+      points_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+          config_.problem.perception.points_topic, rclcpp::SensorDataQoS(),
+          [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+          { on_points(*msg); });
+      odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+          config_.problem.perception.odom_topic, rclcpp::QoS(50),
+          [this](const nav_msgs::msg::Odometry::SharedPtr msg)
+          { on_odom(*msg); });
+
       if (map_sfc_)
       {
         map_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -156,6 +187,242 @@ namespace planner::node
     }
 
    private:
+    struct OdomSample
+    {
+      std::int32_t       sec         = 0;
+      std::uint32_t      nanosec     = 0;
+      Eigen::Vector3d    position    = Eigen::Vector3d::Zero();
+      Eigen::Quaterniond orientation = Eigen::Quaterniond::Identity();
+    };
+
+    struct PendingCloud
+    {
+      bool                          ready   = false;
+      std::int32_t                  sec     = 0;
+      std::uint32_t                 nanosec = 0;
+      builtin_interfaces::msg::Time stamp;
+      std::vector<Eigen::Vector3d>  points;
+    };
+
+    void load_lidar_mount(const std::string &config_dir)
+    {
+      const auto path = std::filesystem::path(config_dir) / "lidar_sim.yaml";
+      if (!std::filesystem::is_regular_file(path))
+      {
+        RCLCPP_WARN(this->get_logger(),
+                    "lidar_sim.yaml not found; lidar mount is the body origin");
+        return;
+      }
+      const YAML::Node sensor =
+          YAML::LoadFile(path.string())["lidar_sim"]["sensor"];
+      const auto position    = sensor["position_body_m"];
+      const auto orientation = sensor["orientation_body_xyzw"];
+      if (!position || position.size() != 3 || !orientation ||
+          orientation.size() != 4)
+      {
+        throw std::runtime_error(
+            "lidar_sim.yaml sensor mount must be position_body_m[3] and "
+            "orientation_body_xyzw[4]");
+      }
+      mount_.position_body =
+          Eigen::Vector3d(position[0].as<double>(), position[1].as<double>(),
+                          position[2].as<double>());
+      mount_.orientation_body = Eigen::Quaterniond(
+          orientation[3].as<double>(), orientation[0].as<double>(),
+          orientation[1].as<double>(), orientation[2].as<double>());
+      require_rotation(mount_.orientation_body, "lidar mount");
+    }
+
+    static bool xyz_layout(const sensor_msgs::msg::PointCloud2 &msg)
+    {
+      return msg.fields.size() >= 3 && msg.fields[0].name == "x" &&
+             msg.fields[0].offset == 0 && msg.fields[1].name == "y" &&
+             msg.fields[1].offset == 4 && msg.fields[2].name == "z" &&
+             msg.fields[2].offset == 8 && msg.point_step >= 12 &&
+             msg.data.size() >= static_cast<std::size_t>(msg.height) *
+                                    msg.width * msg.point_step;
+    }
+
+    static std::vector<Eigen::Vector3d> read_xyz(
+        const sensor_msgs::msg::PointCloud2 &msg)
+    {
+      std::vector<Eigen::Vector3d> points;
+      const std::uint32_t          count = msg.height * msg.width;
+      points.reserve(count);
+      for (std::uint32_t i = 0; i < count; ++i)
+      {
+        float xyz[3];
+        std::memcpy(xyz, msg.data.data() + i * msg.point_step, sizeof(xyz));
+        points.emplace_back(xyz[0], xyz[1], xyz[2]);
+      }
+      return points;
+    }
+
+    static sensor_msgs::msg::PointCloud2 write_xyz(
+        const std::vector<Eigen::Vector3d>  &points,
+        const builtin_interfaces::msg::Time &stamp, const std::string &frame)
+    {
+      sensor_msgs::msg::PointCloud2 msg;
+      msg.header.stamp    = stamp;
+      msg.header.frame_id = frame;
+      msg.height          = 1;
+      msg.width           = static_cast<std::uint32_t>(points.size());
+      msg.fields.resize(3);
+      const char *names[3] = {"x", "y", "z"};
+      for (std::uint32_t axis = 0; axis < 3; ++axis)
+      {
+        msg.fields[axis].name     = names[axis];
+        msg.fields[axis].offset   = axis * 4;
+        msg.fields[axis].datatype = sensor_msgs::msg::PointField::FLOAT32;
+        msg.fields[axis].count    = 1;
+      }
+      msg.is_bigendian = false;
+      msg.point_step   = 12;
+      msg.row_step     = msg.point_step * msg.width;
+      msg.is_dense     = true;
+      msg.data.resize(static_cast<std::size_t>(msg.row_step));
+      for (std::uint32_t i = 0; i < msg.width; ++i)
+      {
+        float xyz[3] = {static_cast<float>(points[i].x()),
+                        static_cast<float>(points[i].y()),
+                        static_cast<float>(points[i].z())};
+        std::memcpy(msg.data.data() + i * msg.point_step, xyz, sizeof(xyz));
+      }
+      return msg;
+    }
+
+    void remember_odom(const nav_msgs::msg::Odometry &msg)
+    {
+      if (msg.header.frame_id != config_.problem.perception.world_frame ||
+          msg.child_frame_id != config_.problem.perception.body_frame)
+      {
+        if (!odom_frame_warned_)
+        {
+          RCLCPP_ERROR(this->get_logger(),
+                       "odometry frames are %s -> %s; expected %s -> %s. "
+                       "The lidar cloud is not transformed.",
+                       msg.header.frame_id.c_str(), msg.child_frame_id.c_str(),
+                       config_.problem.perception.world_frame.c_str(),
+                       config_.problem.perception.body_frame.c_str());
+          odom_frame_warned_ = true;
+        }
+        return;
+      }
+      OdomSample sample;
+      sample.sec     = msg.header.stamp.sec;
+      sample.nanosec = msg.header.stamp.nanosec;
+      sample.position =
+          Eigen::Vector3d(msg.pose.pose.position.x, msg.pose.pose.position.y,
+                          msg.pose.pose.position.z);
+      sample.orientation = Eigen::Quaterniond(
+          msg.pose.pose.orientation.w, msg.pose.pose.orientation.x,
+          msg.pose.pose.orientation.y, msg.pose.pose.orientation.z);
+      odoms_.push_back(sample);
+      while (odoms_.size() > 50)
+      {
+        odoms_.pop_front();
+      }
+    }
+
+    const OdomSample *find_odom(std::int32_t sec, std::uint32_t nanosec) const
+    {
+      for (auto it = odoms_.rbegin(); it != odoms_.rend(); ++it)
+      {
+        if (it->sec == sec && it->nanosec == nanosec)
+        {
+          return &(*it);
+        }
+      }
+      return nullptr;
+    }
+
+    void publish_world_cloud(const PendingCloud &cloud, const OdomSample &odom)
+    {
+      BodyPose body;
+      body.position_world    = odom.position;
+      body.orientation_world = odom.orientation;
+      std::vector<Eigen::Vector3d> world;
+      try
+      {
+        world = lidar_points_to_world(cloud.points, body, mount_);
+      }
+      catch (const std::exception &error)
+      {
+        RCLCPP_ERROR(this->get_logger(),
+                     "lidar cloud left in the sensor frame was not mapped: %s",
+                     error.what());
+        return;
+      }
+      world_cloud_pub_->publish(write_xyz(
+          world, cloud.stamp, config_.problem.perception.world_frame));
+      if (rog_map_)
+      {
+        rog_map_->update(world, body.position_world, body.orientation_world);
+      }
+      if (!world_cloud_logged_)
+      {
+        RCLCPP_INFO(this->get_logger(),
+                    "transformed %s from %s into %s (%zu points) on %s",
+                    config_.problem.perception.points_topic.c_str(),
+                    config_.problem.perception.sensor_frame.c_str(),
+                    config_.problem.perception.world_frame.c_str(),
+                    world.size(),
+                    config_.problem.perception.world_cloud_topic.c_str());
+        world_cloud_logged_ = true;
+      }
+    }
+
+    void flush_pending()
+    {
+      if (!pending_.ready)
+      {
+        return;
+      }
+      const OdomSample *odom = find_odom(pending_.sec, pending_.nanosec);
+      if (odom == nullptr)
+      {
+        return;
+      }
+      publish_world_cloud(pending_, *odom);
+      pending_.ready = false;
+    }
+
+    void on_odom(const nav_msgs::msg::Odometry &msg)
+    {
+      remember_odom(msg);
+      flush_pending();
+    }
+
+    void on_points(const sensor_msgs::msg::PointCloud2 &msg)
+    {
+      if (msg.header.frame_id != config_.problem.perception.sensor_frame)
+      {
+        if (!points_frame_warned_)
+        {
+          RCLCPP_ERROR(this->get_logger(),
+                       "refusing %s cloud in frame '%s'; expected the lidar "
+                       "frame '%s' so it can be transformed into world ENU",
+                       config_.problem.perception.points_topic.c_str(),
+                       msg.header.frame_id.c_str(),
+                       config_.problem.perception.sensor_frame.c_str());
+          points_frame_warned_ = true;
+        }
+        return;
+      }
+      if (!xyz_layout(msg))
+      {
+        RCLCPP_ERROR(this->get_logger(),
+                     "lidar cloud is not packed float32 xyz; not transformed");
+        return;
+      }
+      pending_.ready   = true;
+      pending_.sec     = msg.header.stamp.sec;
+      pending_.nanosec = msg.header.stamp.nanosec;
+      pending_.stamp   = msg.header.stamp;
+      pending_.points  = read_xyz(msg);
+      flush_pending();
+    }
+
     void on_map(const sensor_msgs::msg::PointCloud2 &msg)
     {
       if (map_ || msg.point_step < 12 || msg.height * msg.width == 0)
@@ -325,6 +592,18 @@ namespace planner::node
     core::ProblemConfig              config_;
     rclcpp::TimerBase::SharedPtr     timer_;
     bool                             planned_ = false;
+
+    LidarMount             mount_;
+    std::deque<OdomSample> odoms_;
+    PendingCloud           pending_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
+        world_cloud_pub_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr points_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr       odom_sub_;
+    std::unique_ptr<core::MapUpdater>                              rog_map_;
+    bool world_cloud_logged_  = false;
+    bool odom_frame_warned_   = false;
+    bool points_frame_warned_ = false;
 
     // --- map_sfc only ---
     bool map_sfc_ = false;

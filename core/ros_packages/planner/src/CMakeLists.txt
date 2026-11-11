@@ -10,6 +10,10 @@ add_library(planner_core STATIC
   planner.cpp
   trajectory.cpp
   grid_astar.cpp
+  corridor_adapter.cpp
+  ciri.cpp
+  waypoint_route.cpp
+  rog_map_adapter.cpp
 )
 target_include_directories(planner_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(planner_core

@@ -186,6 +186,17 @@ the source point cloud (tighter opacity/scale thresholds in
 `convert_3dgs_scene.py`) to keep only genuinely solid obstacles rather than
 every sensed point.
 
+## Optional: SUPER high-speed benchmark geometry
+
+`ap-pnc dev-sim prepare --scene super-high-speed` is a separate scene. It does
+not change the pillar default or the garden scene. Generate the PLY first; the
+PCD and PLY stay under `.artifacts/`. The job uses the waypoint round trip in
+`planning_super_high_speed.yaml` (start `(0, -50, 1.5)`, via `(0, 50, 1.5)` and
+back), not the radius-8 circle. `--corridor-source box_sfc` or `map_sfc` still
+selects the existing corridor. Speed stays on `--v-max`; do not use SUPER's
+25 m/s quadrotor limit. Details, the license limit, and the optional external
+ROG-Map / CIRI prefixes are in [SUPER_SCENE.md](SUPER_SCENE.md).
+
 ## Isolation and verification
 
 The launcher uses Docker `--network none`, host IPC, `ROS_DOMAIN_ID=213` and

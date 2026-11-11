@@ -92,13 +92,14 @@ namespace planner::core
     /**
      * @brief Run one corridor-constrained replanning leg against a sensed map.
      *
-     * Unlike plan(), the corridor comes from `map` (grid A* + FIRI convex
-     * decomposition, see grid_astar.hpp and gcopter/sfc_gen.hpp) instead of a
-     * fixed box around basic_traj_. `iniState`/`finState` are full
-     * position/velocity/acceleration boundary conditions (GCOPTER enforces
-     * them exactly), so chaining calls with each leg's `finState` as the
-     * next leg's `iniState` produces a trajectory that splices without a
-     * velocity/acceleration discontinuity.
+     * Unlike plan(), the corridor comes from `map` instead of a fixed box
+     * around basic_traj_. The default backend is grid A* + FIRI.
+     * `corridor_backend: ciri` uses the in-tree CIRI inflation instead.
+     * The polytope type stays `std::vector<Eigen::MatrixX4d>`.
+     * `iniState`/`finState` are full position/velocity/acceleration boundary
+     * conditions (GCOPTER enforces them exactly), so chaining calls with each
+     * leg's `finState` as the next leg's `iniState` produces a trajectory that
+     * splices without a velocity/acceleration discontinuity.
      *
      * @param iniState Initial position/velocity/acceleration (columns), world
      * @param finState Terminal position/velocity/acceleration (columns), world
@@ -109,26 +110,29 @@ namespace planner::core
         const Eigen::Matrix3d &iniState, const Eigen::Matrix3d &finState,
         const voxel_map::VoxelMap &map);
 
+    /**
+     * @brief Chain waypoint legs through `map` with the selected corridor.
+     *
+     * Each leg is rest-to-rest at the configured waypoints. This is the
+     * point-cloud flight path; it does not build the fixed box corridor.
+     */
+    std::optional<ReferenceTrajectory> plan_map_route(
+        const voxel_map::VoxelMap &map);
+
     /// Problem configuration in use.
     const ProblemConfig &config() const { return config_; }
 
-    /// The nominal (unobstructed) mission route this config's basic_traj_
-    /// describes; columns of each point are (pos, vel, acc). Exposed so
-    /// map_sfc continuous replanning can advance through the same waypoints
-    /// `plan()`'s box-SFC path uses, leg by leg.
-    std::vector<basic_trajectories::Mat3x4> mission_route() const
-    {
-      return basic_traj_->samplingPointArray(config_.problem.piece_n);
-    }
+    /// Mission route used by plan() and map_sfc replanning. Columns of each
+    /// point are (pos, vel, acc). Empty `waypoints` keeps basic_traj_; a
+    /// configured polyline replaces that seed and is not the default circle.
+    std::vector<basic_trajectories::Mat3x4> mission_route() const;
 
    private:
     void init_basic_trajectory_type(int type);
-    void create_basic_trajectory_sfc(std::vector<Eigen::MatrixX4d> &hPolys);
-    bool build_corridor_sfc(const Eigen::Vector3d         &start,
-                            const Eigen::Vector3d         &goal,
-                            const voxel_map::VoxelMap     &map,
-                            std::vector<Eigen::MatrixX4d> &hPolys,
-                            std::vector<Eigen::Vector3d>  &route);
+    std::vector<basic_trajectories::Mat3x4> seed_route() const;
+    void                                    create_basic_trajectory_sfc(
+                                           const std::vector<basic_trajectories::Mat3x4> &route,
+                                           std::vector<Eigen::MatrixX4d>                 &hPolys);
     void log(LogLevel level, const std::string &msg) const;
 
     ProblemConfig                                   config_;

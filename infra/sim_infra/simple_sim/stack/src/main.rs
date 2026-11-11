@@ -395,6 +395,11 @@ fn read_run(path: &Path) -> Result<Run> {
             required.iter().all(|key| headers.iter().any(|h| h == key)),
             "missing solver reference/integrator fields"
         );
+        let yb_slew = cfg["nmpc"]["yb_slew_rad_s"].as_f64().unwrap_or(0.0);
+        let yb_hold = cfg["nmpc"]["yb_hold_speed_m_s"].as_f64().unwrap_or(0.0);
+        let shape_yb = yb_slew > 0.0 || yb_hold > 0.0;
+        let mut prev_stage0: Option<[f64; 3]> = None;
+        let mut prev_stage: Option<[f64; 3]> = None;
         for (i, record) in reader.records().enumerate() {
             let record = record?;
             let r: BTreeMap<String, f64> = headers
@@ -444,10 +449,41 @@ fn read_run(path: &Path) -> Result<Run> {
                     "solver polynomial reference mismatch"
                 );
                 let name = format!("planner_yb_{}", ["x", "y", "z"][axis]);
-                ensure!(
-                    (r[&format!("yref_{}", axis + yb_start)] - r[&name]).abs() < 1e-12,
-                    "planner to NMPC yb changed"
-                );
+                if !shape_yb {
+                    ensure!(
+                        (r[&format!("yref_{}", axis + yb_start)] - r[&name]).abs() < 1e-12,
+                        "planner to NMPC yb changed"
+                    );
+                }
+            }
+            if shape_yb && yb_slew > 0.0 {
+                let yref = [
+                    r[&format!("yref_{}", yb_start)],
+                    r[&format!("yref_{}", yb_start + 1)],
+                    r[&format!("yref_{}", yb_start + 2)],
+                ];
+                let angle = |a: [f64; 3], b: [f64; 3]| {
+                    let dot = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]).clamp(-1.0, 1.0);
+                    dot.acos()
+                };
+                if stage == 0 {
+                    if let Some(prev) = prev_stage0 {
+                        let dt = manifest.control_dt_ns as f64 * 1e-9;
+                        ensure!(
+                            angle(prev, yref) <= yb_slew * dt + 1e-4,
+                            "body-y reference slewed faster than yb_slew_rad_s"
+                        );
+                    }
+                    prev_stage0 = Some(yref);
+                    prev_stage = Some(yref);
+                } else if let Some(prev) = prev_stage {
+                    let dt = step_ns as f64 * 1e-9;
+                    ensure!(
+                        angle(prev, yref) <= yb_slew * dt + 1e-4,
+                        "body-y horizon slewed faster than yb_slew_rad_s"
+                    );
+                    prev_stage = Some(yref);
+                }
             }
             let norm: f64 = (yb_start..yb_start + 3)
                 .map(|a| r[&format!("yref_{a}")].powi(2))

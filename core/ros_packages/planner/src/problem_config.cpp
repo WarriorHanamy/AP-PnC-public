@@ -16,7 +16,9 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <cmath>
 #include <filesystem>
+#include <planner_core/corridor_adapter.hpp>
 #include <planner_core/problem_config.hpp>
 #include <stdexcept>
 
@@ -54,6 +56,69 @@ namespace planner::core
     problem.piece_n = get_or<int>(problem_node, "piece_n", problem.piece_n);
     problem.corridor_source = get_or<std::string>(
         problem_node, "corridor_source", problem.corridor_source);
+    problem.map_backend =
+        get_or<std::string>(problem_node, "map_backend", problem.map_backend);
+    problem.corridor_backend = get_or<std::string>(
+        problem_node, "corridor_backend", problem.corridor_backend);
+    problem.rog_map_config = get_or<std::string>(problem_node, "rog_map_config",
+                                                 problem.rog_map_config);
+    if (!map_backend_available(problem.map_backend))
+    {
+      throw std::invalid_argument(
+          "map_backend '" + problem.map_backend +
+          "' is not linked in this build; the default is voxel. rog requires "
+          "-DAP_PNC_WITH_ROG_MAP=ON and an external ROG-Map prefix");
+    }
+    if (!corridor_backend_available(problem.corridor_backend))
+    {
+      throw std::invalid_argument("corridor_backend '" +
+                                  problem.corridor_backend +
+                                  "' is unknown; choose firi or ciri");
+    }
+    if (problem.map_backend == "rog" &&
+        !std::filesystem::path(problem.rog_map_config).is_absolute())
+    {
+      throw std::invalid_argument(
+          "rog_map_config must be an absolute path to an external ROG-Map "
+          "yaml");
+    }
+    if (problem_node["waypoints"])
+    {
+      const YAML::Node waypoints = problem_node["waypoints"];
+      if (!waypoints.IsSequence())
+      {
+        throw std::invalid_argument(
+            "waypoints must be a sequence of [x, y, z]");
+      }
+      problem.waypoints.clear();
+      for (const YAML::Node &row : waypoints)
+      {
+        if (!row.IsSequence() || row.size() != 3)
+        {
+          throw std::invalid_argument("each waypoint must be [x, y, z]");
+        }
+        Eigen::Vector3d point(row[0].as<double>(), row[1].as<double>(),
+                              row[2].as<double>());
+        if (!point.allFinite())
+        {
+          throw std::invalid_argument("waypoint coordinates must be finite");
+        }
+        problem.waypoints.push_back(point);
+      }
+      if (!problem.waypoints.empty() && problem.waypoints.size() < 2)
+      {
+        throw std::invalid_argument("waypoints need at least two points");
+      }
+    }
+    problem.waypoint_speed_m_s =
+        get_or(problem_node, "waypoint_speed_m_s", problem.waypoint_speed_m_s);
+    if (!problem.waypoints.empty() &&
+        (!std::isfinite(problem.waypoint_speed_m_s) ||
+         problem.waypoint_speed_m_s <= 0.0))
+    {
+      throw std::invalid_argument(
+          "waypoint_speed_m_s must be finite and positive");
+    }
 
     const YAML::Node box_node = problem_node["box"];
     problem.box.left          = get_or(box_node, "left", problem.box.left);
@@ -153,6 +218,40 @@ namespace planner::core
         get_or(map_node, "replan_margin_s", problem.map.replan_margin_s);
     problem.map.drift_threshold_m =
         get_or(map_node, "drift_threshold_m", problem.map.drift_threshold_m);
+    problem.map.ciri_robot_radius_m = get_or(map_node, "ciri_robot_radius_m",
+                                             problem.map.ciri_robot_radius_m);
+    problem.map.ciri_iterations =
+        get_or(map_node, "ciri_iterations", problem.map.ciri_iterations);
+    problem.map.point_cloud =
+        get_or<std::string>(map_node, "point_cloud", problem.map.point_cloud);
+    if (!problem.map.point_cloud.empty() &&
+        !std::filesystem::path(problem.map.point_cloud).is_absolute())
+    {
+      throw std::invalid_argument(
+          "map.point_cloud must be an absolute xyz PLY path");
+    }
+    if (!std::isfinite(problem.map.ciri_robot_radius_m) ||
+        problem.map.ciri_robot_radius_m < 0.0 ||
+        problem.map.ciri_iterations < 1)
+    {
+      throw std::invalid_argument(
+          "CIRI robot radius must be finite and non-negative, and iterations "
+          "must be positive");
+    }
+
+    const YAML::Node perception     = root["perception"];
+    problem.perception.points_topic = get_or<std::string>(
+        perception, "points_topic", problem.perception.points_topic);
+    problem.perception.odom_topic = get_or<std::string>(
+        perception, "odom_topic", problem.perception.odom_topic);
+    problem.perception.world_cloud_topic = get_or<std::string>(
+        perception, "world_cloud_topic", problem.perception.world_cloud_topic);
+    problem.perception.world_frame = get_or<std::string>(
+        perception, "world_frame", problem.perception.world_frame);
+    problem.perception.body_frame = get_or<std::string>(
+        perception, "body_frame", problem.perception.body_frame);
+    problem.perception.sensor_frame = get_or<std::string>(
+        perception, "sensor_frame", problem.perception.sensor_frame);
 
     // Mirror cost settings into the gcopter singleton it actually consumes
     cost_config.v_max                 = problem.cost.v_max;

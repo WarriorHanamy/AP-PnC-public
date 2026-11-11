@@ -41,6 +41,7 @@ solver also requires rebuilding its consumers.
 - [nmpc.yaml](bringup/config/nmpc.yaml) — controller and solver.
 - [simple_sim.yaml](bringup/config/simple_sim.yaml) — simulation plant.
 - [lidar_sim.yaml](bringup/config/lidar_sim.yaml) — interactive development scene.
+- [lidar_sim_super_high_speed.yaml](bringup/config/lidar_sim_super_high_speed.yaml) — optional SUPER high-speed point cloud. The map is not in the tree; see [infra/SUPER_SCENE.md](../infra/SUPER_SCENE.md).
 
 ## Linux build and development containers
 

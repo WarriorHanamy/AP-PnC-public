@@ -68,6 +68,14 @@ namespace nmpc
     // the motor time constant, which biases a zero-lag fit. 0 disables the
     // delay.
     double cx_slope_lag_s = 0.0;
+    // Reference body-y presented to the solver, not a baked cost weight.
+    // The flatness map replaces body-y with a hover heading below about 1 m/s
+    // and the heading then reverses, at well above the yaw command bound.
+    // While speed is below yb_hold_speed_m_s the shown body-y stays on the last
+    // cruise value. It then rotates toward the flatness value no faster than
+    // yb_slew_rad_s. Non-positive values disable that half of the shaping.
+    double yb_hold_speed_m_s = 1.0;
+    double yb_slew_rad_s     = 0.8;
     void   validate() const;
   };
 

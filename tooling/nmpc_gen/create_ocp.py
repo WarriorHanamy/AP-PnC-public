@@ -47,6 +47,8 @@ def load_nmpc_settings(path: Path | None = None) -> dict:
         "cx_slope_covariance_limit",
         "cx_slope_min_excitation",
         "cx_slope_lag_s",
+        "yb_hold_speed_m_s",
+        "yb_slew_rad_s",
     }
     if set(settings) != required | runtime:
         raise ValueError("missing or unsupported NMPC settings keys")
@@ -68,6 +70,11 @@ def load_nmpc_settings(path: Path | None = None) -> dict:
         raise ValueError("NMPC horizon must contain an integer number of intervals")
     if round(ratio) < 1:
         raise ValueError("NMPC horizon must contain at least one interval")
+    for name in ("yb_hold_speed_m_s", "yb_slew_rad_s"):
+        value = float(settings[name])
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError(f"invalid NMPC {name}")
+        settings[name] = value
     slope = float(settings["cx_alpha_slope"])
     # SIGNED slope: d(cx)/d(alpha). Negative for this airframe; any finite value
     # is accepted because the sign is a physical property, not a convention.
@@ -100,11 +107,11 @@ def ocp_nls() -> AcadosOcp:
     import casadi as cs
     from acados_template import AcadosOcp
 
-    from tooling.nmpc_gen.model import create_tailsitter_model, rotation_matrix_from_quaternion
+    from tooling.nmpc_gen.model import create_rate_thrust_model, rotation_matrix_from_quaternion
 
     settings = load_nmpc_settings()
     ocp = AcadosOcp()
-    model = create_tailsitter_model()
+    model = create_rate_thrust_model()
     ocp.model = model
     rotation_world_from_body = rotation_matrix_from_quaternion(model.x[9:13])
     tracking_output = cs.vertcat(model.x[:3], model.x[3:6], rotation_world_from_body[:, 1])

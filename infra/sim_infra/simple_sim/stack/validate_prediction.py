@@ -7,11 +7,11 @@ import numpy as np
 
 from tooling.env import artifact_path, get_git_root
 from tooling.nmpc_gen.create_ocp import load_nmpc_settings, ocp_nls
-from tooling.nmpc_gen.model import create_tailsitter_model, rotation_matrix_from_quaternion
+from tooling.nmpc_gen.model import create_rate_thrust_model, rotation_matrix_from_quaternion
 
 
 def main():
-    model = create_tailsitter_model()
+    model = create_rate_thrust_model()
     assert (model.x.numel(), model.u.numel(), model.p.numel()) == (15, 4, 1)
     f = ca.Function("test_prediction", [model.x, model.u, model.p], [model.f_expl_expr])
     jx = ca.Function(

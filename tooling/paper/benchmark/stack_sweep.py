@@ -24,7 +24,6 @@ feedforward has to be better than its own baseline on all of them.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,23 +65,6 @@ class Row:
         }
 
 
-def _patch_config(text: str, variant: str) -> str:
-    """Return the simple_sim.yaml text with the controller of one variant."""
-    if variant not in VARIANTS:
-        raise ValueError(f"unknown variant {variant!r}, expected one of {VARIANTS}")
-    controller = "nmpc" if variant == "nmpc" else "se3"
-    text = re.sub(r"^  controller: .*$", f"  controller: {controller}", text, flags=re.M)
-    if variant != "nmpc":
-        enabled = "true" if variant == "se3-aero-ff" else "false"
-        text = re.sub(
-            r"^    aero_flatness_feedforward: .*$",
-            f"    aero_flatness_feedforward: {enabled}",
-            text,
-            flags=re.M,
-        )
-    return text
-
-
 def _variant_overrides(variant: str) -> dict:
     """What a variant means, as overrides for the job's own configuration copy.
 
@@ -91,9 +73,7 @@ def _variant_overrides(variant: str) -> dict:
     """
     if variant not in VARIANTS:
         raise ValueError(f"unknown variant {variant!r}, expected one of {VARIANTS}")
-    overrides: dict[str, object] = {
-        "simple_sim.controller": "nmpc" if variant == "nmpc" else "se3"
-    }
+    overrides: dict[str, object] = {}
     if variant != "nmpc":
         overrides["simple_sim.se3.aero_flatness_feedforward"] = variant == "se3-aero-ff"
     return overrides
@@ -107,6 +87,7 @@ def _run_once(
     profile: str,
     hold_s: float,
     mass_kg: float,
+    controller: str,
     overrides: dict,
     log_dir: Path,
     tag: str,
@@ -124,6 +105,7 @@ def _run_once(
             hold_s=hold_s,
             mass_kg=mass_kg,
             duration_s=duration_s,
+            controller=controller,
             overrides=overrides,
         )
     )
@@ -149,6 +131,7 @@ def run_matrix(
     rows: list[Row] = []
     for variant in variants:
         overrides = _variant_overrides(variant)
+        controller = "nmpc" if variant == "nmpc" else "se3"
         for profile in profiles:
             for aero in aeros:
                 for v_max in v_maxs:
@@ -164,6 +147,7 @@ def run_matrix(
                             profile=profile,
                             hold_s=hold_s,
                             mass_kg=mass_kg,
+                            controller=controller,
                             overrides=overrides,
                             log_dir=out,
                             tag=tag,

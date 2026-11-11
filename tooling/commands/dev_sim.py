@@ -20,7 +20,10 @@ def build():
 def prepare(
     controller: str = typer.Option("nmpc"),
     v_max: float = typer.Option(4.0, min=0.01),
-    scene: str = typer.Option("pillars", help="pillars (default) or garden-3dgs (experimental)"),
+    scene: str = typer.Option(
+        "pillars",
+        help="pillars (default), garden-3dgs, or super-high-speed (external PCD/PLY)",
+    ),
     corridor_source: str = typer.Option(
         "box_sfc", help="box_sfc (default, fixed corridor) or map_sfc (experimental, "
         "continuously replanned from /lidar_sim/map)"),

@@ -32,6 +32,16 @@ nmpc:
   # Regress cx(t) on alpha(t - lag) to compensate the motor time constant
   # (0.076 s). 0 disables the delay.
   cx_slope_lag_s: 0.0
+  # Body-y shown to the solver around a rest-to-rest reversal. Not a cost
+  # weight and not baked into the generated OCP. The flatness map swaps in a
+  # hover heading below ~1 m/s and the return heading is roughly the opposite
+  # cruise heading, so the raw body-y rate at the far waypoint is far above the
+  # 1.5 rad/s yaw bound. The adapter keeps the last cruise body-y while speed
+  # is below yb_hold_speed_m_s, then rotates toward the flatness value no faster
+  # than yb_slew_rad_s. Set either to 0 to disable that half. A mid-course hover
+  # dwell is not required for this; the reference speed already stops.
+  yb_hold_speed_m_s: 1.0
+  yb_slew_rad_s: 0.8
   objective:
     position: [15.0, 15.0, 10.0]
     velocity: [1.0, 1.0, 1.0]

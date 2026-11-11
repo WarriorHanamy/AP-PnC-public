@@ -48,7 +48,7 @@ def rotation_matrix_from_quaternion(quaternion_wxyz: cs.SX) -> cs.SX:
     )
 
 
-def create_tailsitter_model() -> AcadosModel:
+def create_rate_thrust_model() -> AcadosModel:
     """Construct the augmented command-rate control model (no actuator lag)."""
     from acados_template import AcadosModel
 
@@ -102,7 +102,8 @@ def create_tailsitter_model() -> AcadosModel:
         coefficient_derivative,
     )
     model = AcadosModel()
-    model.name = "tailsitter_flu"  # generated C symbol prefix, not mathematical notation
+    # C symbol prefix for this +Z specific-thrust / body-rate command model.
+    model.name = "rate_thrust_flu"
     model.x = state
     model.xdot = cs.SX.sym("state_derivative", state.numel())
     model.u = command_derivative

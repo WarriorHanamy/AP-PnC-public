@@ -24,6 +24,8 @@ def project(tmp_path, monkeypatch):
         "nmpc.yaml",
         "lidar_sim.yaml",
         "lidar_sim_3dgs_garden.yaml",
+        "lidar_sim_super_high_speed.yaml",
+        "planning_super_high_speed.yaml",
     ):
         shutil.copy2(ROOT / "core/bringup/config" / name, config / name)
     profiles = tmp_path / ".artifacts/vtol-matlab"
@@ -124,3 +126,34 @@ def test_garden_3dgs_scene_mounts_points_and_freezes_point_cloud_config(project)
     args = dev_sim.command(job)
     assert f"{job}/scene:/workspace/scene:ro" in args
     assert json.loads((job / "dev-sim.json").read_text())["scene"] == "garden-3dgs"
+
+
+def test_super_high_speed_scene_requires_the_converted_ply(project):
+    with pytest.raises(FileNotFoundError, match="super-high-speed"):
+        dev_sim.prepare(scene="super-high-speed", output=project / ".artifacts/super-missing")
+
+
+def test_super_high_speed_scene_uses_waypoints_not_the_dev_circle(project):
+    scene_dir = project / ".artifacts/dev-sim/scenes"
+    scene_dir.mkdir(parents=True)
+    (scene_dir / "random_map_24_6635.ply").write_bytes(b"ply\n")
+    job = dev_sim.prepare(
+        scene="super-high-speed",
+        corridor_source="map_sfc",
+        v_max=8.0,
+        output=project / ".artifacts/super-job",
+    )
+    planning = yaml.safe_load((job / "config/planning.yaml").read_text())["problem_formulation"]
+    lidar = yaml.safe_load((job / "config/lidar_sim.yaml").read_text())["lidar_sim"]
+    assert planning["corridor_source"] == "map_sfc"
+    assert planning["basic_traj"]["type"] == 4
+    assert planning["basic_traj"]["radius"] == 25.0
+    assert planning["basic_traj"]["height"] == 1.5
+    assert planning["cost"]["v_max"] == 8.0
+    assert planning["waypoints"][0] == [0.0, -50.0, 1.5]
+    assert planning["waypoints"][1] == [0.0, 50.0, 1.5]
+    assert lidar["scene"]["type"] == "point_cloud"
+    assert (job / "scene/random_map_24_6635.ply").is_file()
+    args = dev_sim.command(job)
+    assert f"{job}/scene:/workspace/scene:ro" in args
+    assert json.loads((job / "dev-sim.json").read_text())["scene"] == "super-high-speed"
